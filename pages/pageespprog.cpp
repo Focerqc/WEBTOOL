@@ -129,6 +129,7 @@ void PageEspProg::timerSlot()
 void PageEspProg::on_serialRefreshButton_clicked()
 {
     if (mVesc) {
+        mVesc->pairSerialPort();
         ui->serialPortBox->clear();
         auto ports = mVesc->listSerialPorts();
         for (auto &info : ports) {

@@ -32,11 +32,21 @@ public:
     explicit BleUartDummy(QObject *parent = nullptr);
 
     Q_INVOKABLE void startScan();
+    Q_INVOKABLE void startConnect(QString addr);
+    Q_INVOKABLE void disconnectBle();
+    Q_INVOKABLE bool isConnected();
+    Q_INVOKABLE bool isConnecting();
     Q_INVOKABLE void emitScanDone();
 
 signals:
+    void dataRx(QByteArray data);
     void scanDone(QVariantMap devs, bool done);
     void bleError(QString info);
+    void connected();
+    void unintentionalDisconnect();
+
+public slots:
+    void writeData(QByteArray data);
 
 };
 

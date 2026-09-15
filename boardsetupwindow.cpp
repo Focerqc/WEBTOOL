@@ -967,6 +967,7 @@ void BoardSetupWindow::on_bleFirmwareButton_clicked()
 void BoardSetupWindow::on_serialRefreshButton_clicked()
 {
     if (mVesc) {
+        mVesc->pairSerialPort();
         ui->serialPortBox->clear();
         auto ports = mVesc->listSerialPorts();
         for (auto &info : ports) {

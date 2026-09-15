@@ -26,7 +26,9 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#ifndef Q_OS_WASM
 #include <QProcess>
+#endif
 #include <QTcpSocket>
 #include <QHostInfo>
 #include <functional>
@@ -216,6 +218,7 @@ using NetworkReplyTaskItem = QCustomTask<NetworkReplyTask>;
 // Replaces MainWindow::waitProcess and SystemCommandExecutor::executeCommand.
 // ============================================================================
 
+#ifndef Q_OS_WASM
 class ProcessTask : public QObject
 {
     Q_OBJECT
@@ -298,6 +301,49 @@ private:
     std::function<void(const QString &)> m_stdOutCb;
     std::function<void(const QString &)> m_stdErrCb;
 };
+#else
+class ProcessTask : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit ProcessTask(QObject *parent = nullptr)
+        : QObject(parent)
+    {}
+
+    void setProgram(const QString &program) { m_program = program; }
+    void setArguments(const QStringList &args) { m_arguments = args; }
+    void setTimeout(int ms) { m_timeoutMs = ms; }
+    void setStdOutCallback(std::function<void(const QString &)> cb) { m_stdOutCb = std::move(cb); }
+    void setStdErrCallback(std::function<void(const QString &)> cb) { m_stdErrCb = std::move(cb); }
+
+    int exitCode() const { return m_exitCode; }
+    bool wasKilled() const { return m_killed; }
+    QByteArray standardOutput() const { return m_stdOut; }
+    QByteArray standardError() const { return m_stdErr; }
+
+    void start() {
+        emit done(DoneResult::Error);
+    }
+
+    ~ProcessTask() override = default;
+
+signals:
+    void done(DoneResult result);
+
+private:
+    QTimer m_timer;
+    QString m_program;
+    QStringList m_arguments;
+    int m_timeoutMs = 0;
+    int m_exitCode = -1;
+    bool m_killed = false;
+    QByteArray m_stdOut;
+    QByteArray m_stdErr;
+    std::function<void(const QString &)> m_stdOutCb;
+    std::function<void(const QString &)> m_stdErrCb;
+};
+#endif
 
 using ProcessTaskItem = QCustomTask<ProcessTask>;
 

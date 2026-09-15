@@ -48,6 +48,11 @@
 #include "ios/src/setIosParameters.h"
 #endif
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <emscripten/em_asm.h>
+#endif
+
 #ifdef Q_OS_LINUX
 #include <signal.h>
 #include <systemcommandexecutor.h>
@@ -282,6 +287,22 @@ int main(int argc, char *argv[])
     bool loadQmlVesc = false;
     bool qmlOtherScreen = false;
     bool useMobileUi = false;
+#if defined(__EMSCRIPTEN__)
+    int isDesktopParam = EM_ASM_INT({
+        try {
+            if (typeof window !== 'undefined' && window.location) {
+                var params = new URLSearchParams(window.location.search);
+                if (params.get('desktop') === '1') {
+                    return 1;
+                }
+            }
+        } catch (e) {
+            console.error("Error parsing URL search params:", e);
+        }
+        return 0;
+    });
+    useMobileUi = (isDesktopParam != 1);
+#endif
     bool useBoardSetupWindow = false;
     double qmlRot = 0.0;
     bool isTcpHub = false;

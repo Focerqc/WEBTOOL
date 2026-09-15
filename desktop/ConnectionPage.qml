@@ -233,8 +233,10 @@ Item {
                         IconButton {
                             icon.source: "qrc" + Utility.getThemePath() + "icons/Refresh-96.png"
                             ToolTip.visible: hovered
-                            ToolTip.text: "Refresh serial port list"
-                            onClicked: serialPortBox.model = VescIf.listSerialPorts()
+                            onClicked: {
+                                VescIf.pairSerialPort()
+                                serialPortBox.model = VescIf.listSerialPorts()
+                            }
                         }
 
                         IconButton {

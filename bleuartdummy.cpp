@@ -28,9 +28,35 @@ BleUartDummy::BleUartDummy(QObject *parent)
 void BleUartDummy::startScan()
 {
     emit bleError("Bluetooth is not supported in this build");
+    emit scanDone(QVariantMap(), true);
+}
+
+void BleUartDummy::startConnect(QString addr)
+{
+    (void)addr;
+    emit bleError("Bluetooth is not supported in this build");
+}
+
+void BleUartDummy::disconnectBle()
+{
+}
+
+bool BleUartDummy::isConnected()
+{
+    return false;
+}
+
+bool BleUartDummy::isConnecting()
+{
+    return false;
 }
 
 void BleUartDummy::emitScanDone()
 {
     emit scanDone(QVariantMap(), true);
+}
+
+void BleUartDummy::writeData(QByteArray data)
+{
+    (void)data;
 }

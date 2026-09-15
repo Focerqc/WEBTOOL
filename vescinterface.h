@@ -33,11 +33,22 @@
 #include <QFile>
 #include <QQmlEngine>
 
-#ifdef HAS_SERIALPORT
-#include <QSerialPort>
+#ifdef Q_OS_WASM
+#undef HAS_BLUETOOTH
+#undef HAS_CANBUS
+#undef HAS_POS
+#undef HAS_GAMEPAD
 #endif
 
-#ifdef HAS_CANBUS
+#ifdef HAS_SERIALPORT
+#ifdef Q_OS_WASM
+#include "qserialport_wasm.h"
+#else
+#include <QSerialPort>
+#endif
+#endif
+
+#if defined(HAS_CANBUS) && !defined(Q_OS_WASM)
 #include <QCanBus>
 #endif
 
@@ -48,13 +59,13 @@
 #include "tcpserversimple.h"
 #include "udpserversimple.h"
 
-#ifdef HAS_BLUETOOTH
+#if defined(HAS_BLUETOOTH) && !defined(Q_OS_WASM)
 #include "bleuart.h"
 #else
 #include "bleuartdummy.h"
 #endif
 
-#ifdef HAS_POS
+#if defined(HAS_POS) && !defined(Q_OS_WASM)
 #include <QGeoPositionInfoSource>
 #endif
 
@@ -167,7 +178,7 @@ public:
     Q_INVOKABLE bool askQmlLoad() const;
     Q_INVOKABLE void setAskQmlLoad(bool newAskQmlLoad);
 
-#ifdef HAS_BLUETOOTH
+#if defined(HAS_BLUETOOTH) && !defined(Q_OS_WASM)
     Q_INVOKABLE BleUart* bleDevice();
     Q_INVOKABLE void storeBleName(QString address, QString name);
     Q_INVOKABLE QString getBleName(QString address);
@@ -177,6 +188,11 @@ public:
     Q_INVOKABLE bool hasBluetooth() {return true;}
 #else
     Q_INVOKABLE BleUartDummy* bleDevice() {return mBleUart;}
+    Q_INVOKABLE void storeBleName(QString address, QString name) {(void)address; (void)name;}
+    Q_INVOKABLE QString getBleName(QString address) {(void)address; return "";}
+    Q_INVOKABLE QString getLastBleAddr() const {return "";}
+    Q_INVOKABLE void storeBlePreferred(QString address, bool preferred) {(void)address; (void)preferred;}
+    Q_INVOKABLE bool getBlePreferred(QString address) {(void)address; return false;}
     Q_INVOKABLE bool hasBluetooth() {return false;}
 #endif
 
@@ -192,6 +208,7 @@ public:
         return connectSerial(port, 115200);
     }
     Q_INVOKABLE QVariantList listSerialPorts();
+    Q_INVOKABLE bool pairSerialPort();
     Q_INVOKABLE QStringList listCANbusInterfaceNames();
     QList<QString> listCANbusInterfaces();
     Q_INVOKABLE bool connectCANbus(QString backend, QString ifName, int bitrate);

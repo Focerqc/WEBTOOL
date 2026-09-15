@@ -48,6 +48,8 @@ ApplicationWindow {
             Action { text: qsTr("Save App Configuration XML..."); onTriggered: appConfSaveDialog.open() }
             Action { text: qsTr("Load App Configuration XML"); onTriggered: appConfLoadDialog.open() }
             MenuSeparator {}
+            Action { text: qsTr("Restart + Launch Mobile Tool"); onTriggered: Utility.launchMobileUi() }
+            MenuSeparator {}
             Action { text: qsTr("Exit"); onTriggered: Qt.quit() }
         }
         Menu {

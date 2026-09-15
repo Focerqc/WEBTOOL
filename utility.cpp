@@ -19,6 +19,11 @@
 
 #include "utility.h"
 #include "vesctasks.h"
+#include <QProcess>
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#include <emscripten/em_asm.h>
+#endif
 #ifdef Q_OS_IOS
 #include "ios/src/setIosParameters.h"
 #endif
@@ -34,7 +39,9 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QtGlobal>
+#if !defined(QT_NO_NETWORKINTERFACE) && !defined(Q_OS_WASM)
 #include <QNetworkInterface>
+#endif
 #include <QDirIterator>
 #include <QPixmapCache>
 #include <QElapsedTimer>
@@ -381,6 +388,46 @@ void Utility::allowScreenRotation(bool enabled)
     }
 #else
     (void)enabled;
+#endif
+}
+
+void Utility::launchMobileUi()
+{
+#if defined(__EMSCRIPTEN__)
+    EM_ASM({
+        try {
+            var url = new URL(window.location.href);
+            url.searchParams.delete('desktop');
+            window.location.href = url.toString();
+        } catch (e) {
+            window.location.href = window.location.pathname;
+        }
+    });
+#else
+    QString program = qApp->arguments()[0];
+    QStringList params = QStringList() << "--useMobileUi";
+    qApp->quit();
+    QProcess::startDetached(program, params);
+#endif
+}
+
+void Utility::launchDesktopUi()
+{
+#if defined(__EMSCRIPTEN__)
+    EM_ASM({
+        try {
+            var url = new URL(window.location.href);
+            url.searchParams.set('desktop', '1');
+            window.location.href = url.toString();
+        } catch (e) {
+            window.location.search = "?desktop=1";
+        }
+    });
+#else
+    QString program = qApp->arguments()[0];
+    QStringList params = QStringList();
+    qApp->quit();
+    QProcess::startDetached(program, params);
 #endif
 }
 
@@ -1579,6 +1626,7 @@ QVariantList Utility::getNetworkAddresses()
 {
     QVariantList res;
 
+#if !defined(QT_NO_NETWORKINTERFACE) && !defined(Q_OS_WASM)
     for(QHostAddress a: QNetworkInterface::allAddresses()) {
         if(!a.isLoopback()) {
             if (a.protocol() == QAbstractSocket::IPv4Protocol) {
@@ -1586,6 +1634,7 @@ QVariantList Utility::getNetworkAddresses()
             }
         }
     }
+#endif
 
     return res;
 }

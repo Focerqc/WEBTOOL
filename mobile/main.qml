@@ -196,6 +196,16 @@ ApplicationWindow {
 
             Button {
                 Layout.fillWidth: true
+                text: "Restart + Launch Desktop Tool"
+                flat: true
+                onClicked: {
+                    drawer.close()
+                    Utility.launchDesktopUi()
+                }
+            }
+
+            Button {
+                Layout.fillWidth: true
                 text: "Settings"
                 flat: true
 

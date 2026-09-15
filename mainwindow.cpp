@@ -23,7 +23,9 @@
 #include <QDebug>
 #include <QInputDialog>
 #include <QFileDialog>
+#ifndef Q_OS_WASM
 #include <QProcess>
+#endif
 #include <QListWidgetItem>
 #include <cmath>
 #include "vesctasks.h"
@@ -1269,7 +1271,7 @@ void MainWindow::on_actionExit_triggered()
     qApp->exit();
 }
 
-#ifndef Q_OS_IOS
+#if !defined(Q_OS_IOS) && !defined(Q_OS_WASM)
 void MainWindow::on_actionLaunchBoardConfigurator_triggered()
 {
     QString program = qApp->arguments()[0];
@@ -1280,10 +1282,7 @@ void MainWindow::on_actionLaunchBoardConfigurator_triggered()
 
 void MainWindow::on_actionLaunchMobileTool_triggered()
 {
-    QString program = qApp->arguments()[0];
-    QStringList params = QStringList() << "--useMobileUi" ;
-    qApp->quit();
-    QProcess::startDetached(program, params);
+    Utility::launchMobileUi();
 }
 #endif
 

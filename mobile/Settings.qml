@@ -132,6 +132,15 @@ Item {
                         Utility.setDarkMode(checked)
                     }
                 }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Restart + Launch Desktop Tool"
+                    onClicked: {
+                        dialog.close()
+                        Utility.launchDesktopUi()
+                    }
+                }
             }
         }
 

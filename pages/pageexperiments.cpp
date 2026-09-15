@@ -29,7 +29,11 @@
 #include <cmath>
 
 #ifdef HAS_SERIALPORT
+#ifdef Q_OS_WASM
+#include "qserialport_wasm.h"
+#else
 #include <QSerialPortInfo>
+#endif
 #endif
 
 PageExperiments::PageExperiments(QWidget *parent) :

@@ -49,6 +49,10 @@ bool QmlUi::startQmlUi()
 
     mEngine->rootContext()->setContextProperty("VescIf", mVesc);
     mEngine->rootContext()->setContextProperty("Utility", new Utility(this));
+    mEngine->rootContext()->setContextProperty("RtDataStore",
+        new RtDataStore(mVesc->commands(), this));
+
+    mEngine->addImportPath(QStringLiteral("qrc:/"));
 
     mEngine->load(QUrl(QLatin1String("qrc:/mobile/main.qml")));
     return !mEngine->rootObjects().isEmpty();

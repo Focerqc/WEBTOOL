@@ -26,7 +26,12 @@
 #include "vescinterface.h"
 
 #ifdef HAS_SERIALPORT
+#ifdef Q_OS_WASM
+#include "qserialport_wasm.h"
+#else
 #include <QSerialPortInfo>
+#include <QSerialPort>
+#endif
 #endif
 
 namespace Ui {

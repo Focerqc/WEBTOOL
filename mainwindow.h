@@ -117,7 +117,7 @@ private slots:
     void on_actionSaveAppconfXml_triggered();
     void on_actionLoadAppconfXml_triggered();
     void on_actionExit_triggered();
-    #ifndef Q_OS_IOS
+    #if !defined(Q_OS_IOS) && !defined(Q_OS_WASM)
     void on_actionLaunchBoardConfigurator_triggered();
     void on_actionLaunchMobileTool_triggered();
     #endif

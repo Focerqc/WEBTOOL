@@ -34,7 +34,11 @@
 #include "heatshrink/heatshrinkif.h"
 
 #ifdef HAS_SERIALPORT
+#ifdef Q_OS_WASM
+#include "qserialport_wasm.h"
+#else
 #include <QSerialPortInfo>
+#endif
 #endif
 
 #include <QNetworkAccessManager>
@@ -2408,7 +2412,7 @@ bool VescInterface::connectSerial(QString port, int baudrate)
 
     if(!mSerialPort->isOpen()) {
         // TODO: Maybe this test works on other OSes as well
-#ifdef Q_OS_UNIX
+#if defined(Q_OS_UNIX) && !defined(Q_OS_WASM)
         QFileInfo fi(port);
         if (fi.exists()) {
             if (!fi.isWritable()) {
@@ -2447,6 +2451,15 @@ bool VescInterface::connectSerial(QString port, int baudrate)
                           "of VESC Tool."),
                        false, false);
     return false;
+#endif
+}
+
+bool VescInterface::pairSerialPort()
+{
+#if defined(HAS_SERIALPORT) && defined(Q_OS_WASM)
+    return QSerialPort::requestWebSerialPermission();
+#else
+    return true;
 #endif
 }
 

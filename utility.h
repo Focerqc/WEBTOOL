@@ -63,6 +63,8 @@ public:
     Q_INVOKABLE static bool requestBleConnectPermission();
     Q_INVOKABLE static void keepScreenOn(bool on);
     Q_INVOKABLE static void allowScreenRotation(bool enabled);
+    Q_INVOKABLE static void launchMobileUi();
+    Q_INVOKABLE static void launchDesktopUi();
     Q_INVOKABLE static bool waitSignal(QObject *sender, QString signal, int timeoutMs);
 
     // Type-safe overload for C++ callers (avoids SIGNAL() macro)

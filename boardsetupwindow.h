@@ -4,7 +4,9 @@
 #include <QMainWindow>
 #include <QLabel>
 #include <QTimer>
+#ifndef Q_OS_WASM
 #include <QProcess>
+#endif
 #include <QSettings>
 #include <QMap>
 #include "vescinterface.h"

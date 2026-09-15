@@ -25,8 +25,12 @@
 #include "serial_io.h"
 
 #ifdef HAS_SERIALPORT
+#ifdef Q_OS_WASM
+#include "qserialport_wasm.h"
+#else
 #include <QSerialPort>
 #include <QSerialPortInfo>
+#endif
 #endif
 
 class Esp32Flash : public QObject

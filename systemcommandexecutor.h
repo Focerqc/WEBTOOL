@@ -2,7 +2,9 @@
 #define SYSTEMCOMMANDEXECUTOR_H
 
 #include <QObject>
+#ifndef Q_OS_WASM
 #include <QProcess>
+#endif
 #include <QQmlEngine>
 #include "vesctasks.h"
 
@@ -14,6 +16,7 @@ public:
     explicit SystemCommandExecutor(QObject *parent = nullptr) : QObject(parent) {}
 
     Q_INVOKABLE int executeCommand(const QString &command) {
+#ifndef Q_OS_WASM
         int exitCode = -1;
 
         auto tree = Group {
@@ -35,6 +38,10 @@ public:
 
         runTree(tree);
         return exitCode;
+#else
+        (void)command;
+        return -1;
+#endif
     }
 
 signals:
