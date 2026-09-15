@@ -56,6 +56,192 @@ jobs:
 
           # Prepare web root and headers for Netlify / WebAssembly
           cp build-wasm/vesc_tool_7.00.html build-wasm/index.html
+
+          # Inject on-screen diagnostic HUD into index.html
+          python3 - << 'EOF'
+          import re
+
+          with open('build-wasm/index.html', 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # 1. Pass stdout and stderr hooks into the existing qtLoad call
+          def patch_qtload(m):
+              return m.group(0) + """
+                      stdout: function(text) { window.__logToScreen ? window.__logToScreen('[STDOUT] ' + text) : console.log(text); },
+                      stderr: function(text) { window.__logToScreen ? window.__logToScreen('[STDERR] ' + text, 'red') : console.error(text); },"""
+
+          content, count = re.subn(r'qtLoad\s*\(\s*\{', patch_qtload, content, count=1)
+          print(f"Patched qtLoad hooks in index.html (matches: {count})")
+
+          # 2. Inject overlay and scripts right before </body>
+          hud_html = """
+          <!-- VESC Tool WASM Diagnostics Overlay -->
+          <div id="vesc-diagnostics-overlay" style="position:fixed;bottom:0;left:0;right:0;max-height:250px;background:rgba(15,23,42,0.95);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;z-index:99999;border-top:2px solid #0284c7;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,0.6);user-select:text;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);font-size:11px;font-weight:600;">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span style="color:#38bdf8;font-weight:bold;">🛠️ VESC Tool WASM Diagnostics</span>
+                <span>COI: <span id="diag-val-coi">checking...</span></span>
+                <span>Concurrency: <span id="diag-val-cores" style="color:#a5f3fc;">...</span></span>
+                <span>Qt Status: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
+                <button onclick="const o=document.getElementById('vesc-diagnostics-logs');o.style.display=o.style.display==='none'?'block':'none';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Toggle</button>
+              </div>
+            </div>
+            <div id="vesc-diagnostics-logs" style="flex:1;overflow-y:auto;max-height:215px;padding:6px 10px;line-height:1.45;word-break:break-all;white-space:pre-wrap;"></div>
+          </div>
+          <script>
+          (function() {
+            const logContainer = document.getElementById('vesc-diagnostics-logs');
+
+            window.__logToScreen = function(text, color) {
+              if (!logContainer) return;
+              const item = document.createElement('div');
+              item.style.padding = '1px 0';
+              item.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+              if (color) {
+                item.style.color = color;
+              } else if (typeof text === 'string' && (text.includes('[STDERR]') || text.includes('[ERROR]'))) {
+                item.style.color = '#f87171';
+              } else if (typeof text === 'string' && text.includes('[WARN]')) {
+                item.style.color = '#facc15';
+              } else {
+                item.style.color = '#cbd5e1';
+              }
+              const ts = new Date().toTimeString().split(' ')[0] + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+              item.textContent = '[' + ts + '] ' + text;
+              logContainer.appendChild(item);
+              logContainer.scrollTop = logContainer.scrollHeight;
+            };
+
+            // 1. Live status monitors
+            function getQtStatus() {
+              const el = document.getElementById('qtstatus') || document.querySelector('.qtstatus');
+              if (el && el.innerText && el.innerText.trim().length > 0) {
+                return el.innerText.trim();
+              }
+              const spinner = document.getElementById('qtspinner');
+              if (spinner && spinner.style.display !== 'none') {
+                return 'Loading / Compiling...';
+              }
+              return 'Running / Ready';
+            }
+
+            function updateHud() {
+              const coiEl = document.getElementById('diag-val-coi');
+              if (coiEl) {
+                coiEl.innerHTML = window.crossOriginIsolated
+                  ? '<span style="color:#4ade80;font-weight:bold;">true (Isolated)</span>'
+                  : '<span style="color:#f87171;font-weight:bold;">false (NOT Isolated - SAB Disabled!)</span>';
+              }
+              const coresEl = document.getElementById('diag-val-cores');
+              if (coresEl) {
+                coresEl.textContent = (navigator.hardwareConcurrency || 'unknown') + ' cores';
+              }
+              const qtEl = document.getElementById('diag-val-qt');
+              if (qtEl) {
+                qtEl.textContent = getQtStatus();
+              }
+            }
+            updateHud();
+            setInterval(updateHud, 500);
+
+            // 2. Global log redirection
+            const origLog = console.log;
+            const origWarn = console.warn;
+            const origError = console.error;
+
+            console.log = function(...args) {
+              try {
+                window.__logToScreen(args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
+              } catch (_) {}
+              origLog.apply(console, args);
+            };
+
+            console.warn = function(...args) {
+              try {
+                window.__logToScreen('[WARN] ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '), '#facc15');
+              } catch (_) {}
+              origWarn.apply(console, args);
+            };
+
+            console.error = function(...args) {
+              try {
+                window.__logToScreen('[ERROR] ' + args.map(a => (a instanceof Error ? (a.stack || a.message) : (typeof a === 'object' ? JSON.stringify(a) : String(a)))).join(' '), '#f87171');
+              } catch (_) {}
+              origError.apply(console, args);
+            };
+
+            window.onerror = function(msg, url, line, col, error) {
+              const errText = error ? (error.stack || error.message) : (msg + ' (' + url + ':' + line + ':' + col + ')');
+              window.__logToScreen('[UNCAUGHT ERROR] ' + errText, '#ef4444');
+              return false;
+            };
+
+            window.onunhandledrejection = function(event) {
+              const reason = event.reason ? (event.reason.stack || event.reason.message || event.reason) : 'Unknown Promise Rejection';
+              window.__logToScreen('[UNHANDLED REJECTION] ' + reason, '#ef4444');
+            };
+
+            // Module hooks
+            window.Module = window.Module || {};
+            const origPrint = window.Module.print || console.log;
+            const origPrintErr = window.Module.printErr || console.error;
+            window.Module.print = function(text) { window.__logToScreen('[STDOUT] ' + text); origPrint(text); };
+            window.Module.printErr = function(text) { window.__logToScreen('[STDERR] ' + text, 'red'); origPrintErr(text); };
+
+            // Wrap window.qtLoad if defined or when defined
+            let currentQtLoad = window.qtLoad;
+            Object.defineProperty(window, 'qtLoad', {
+              configurable: true,
+              enumerable: true,
+              get() { return currentQtLoad; },
+              set(fn) {
+                if (typeof fn === 'function') {
+                  currentQtLoad = async function(config) {
+                    config = config || {};
+                    const origStdout = config.stdout;
+                    const origStderr = config.stderr;
+                    config.stdout = function(text) {
+                      window.__logToScreen('[STDOUT] ' + text);
+                      if (origStdout) origStdout(text);
+                    };
+                    config.stderr = function(text) {
+                      window.__logToScreen('[STDERR] ' + text, 'red');
+                      if (origStderr) origStderr(text);
+                    };
+                    return fn(config);
+                  };
+                } else {
+                  currentQtLoad = fn;
+                }
+              }
+            });
+            if (typeof currentQtLoad === 'function') {
+              window.qtLoad = currentQtLoad;
+            }
+
+            window.__logToScreen('Diagnostics overlay initialized successfully.');
+          })();
+          </script>
+          """
+
+          if '</body>' in content:
+              content = content.replace('</body>', hud_html + '\n</body>')
+              print("Injected diagnostics HUD before </body>")
+          elif '</BODY>' in content:
+              content = content.replace('</BODY>', hud_html + '\n</BODY>')
+              print("Injected diagnostics HUD before </BODY>")
+          else:
+              content += hud_html
+              print("Appended diagnostics HUD to HTML")
+
+          with open('build-wasm/index.html', 'w', encoding='utf-8') as f:
+              f.write(content)
+          print("Finished patching build-wasm/index.html")
+          EOF
+
           echo "/*" > build-wasm/_headers
           echo "  Cross-Origin-Opener-Policy: same-origin" >> build-wasm/_headers
           echo "  Cross-Origin-Embedder-Policy: require-corp" >> build-wasm/_headers
