@@ -1,4 +1,4 @@
-name: Build and Deploy to Cloudflare Pages
+name: Build and Deploy to Netlify
 
 on:
   push:
@@ -54,16 +54,25 @@ jobs:
 
           ninja -C build-wasm
 
-          # Prepare web root and headers for Cloudflare Pages
+          # Prepare web root and headers for Netlify / WebAssembly
           cp build-wasm/vesc_tool_7.00.html build-wasm/index.html
           echo "/*" > build-wasm/_headers
           echo "  Cross-Origin-Opener-Policy: same-origin" >> build-wasm/_headers
           echo "  Cross-Origin-Embedder-Policy: require-corp" >> build-wasm/_headers
+          echo "/vesc_tool_7.00.wasm" >> build-wasm/_headers
+          echo "  Content-Type: application/wasm" >> build-wasm/_headers
+          echo "  Cache-Control: public, max-age=31536000, immutable" >> build-wasm/_headers
 
-      - name: Publish to Cloudflare Pages
-        uses: cloudflare/pages-action@1
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v3.0
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: 'webtool'
-          directory: 'build-wasm'
+          publish-dir: './build-wasm'
+          production-branch: WEB-BRANCH-TEST-1
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: "Deploy VESC Tool WASM"
+          enable-pull-request-comment: false
+          enable-commit-comment: true
+          overwrites-pull-request-comment: true
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
