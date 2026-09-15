@@ -28,33 +28,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/Qt
-          key: qt-6.11.0-wasm-multithread-linux
+          key: qt-6.11.0-wasm-multithread-linux-v2
 
-      - name: Install Qt 6 WebAssembly
+      - name: Install Qt 6 WebAssembly & Host Tools
         if: steps.cache-qt.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade aqtinstall
-          python3 -m aqt install-qt all_os wasm 6.11.0 wasm_multithread --outputdir /home/runner/Qt --autodesktop -m qt5compat qtgraphs qtquick3d qtshadertools
+          python3 -m aqt install-qt all_os wasm 6.11.0 wasm_multithread --outputdir /home/runner/Qt --autodesktop -m qt5compat qtgraphs qtquick3d qtshadertools qtquicktimeline qttasktree qtcharts qtimageformats
+          python3 -m aqt install-qt linux desktop 6.11.0 linux_gcc_64 --outputdir /home/runner/Qt -m qtshadertools qtquick3d qtquicktimeline qttasktree
 
       - name: Set Qt Environment
         run: |
           chmod +x /home/runner/Qt/6.11.0/wasm_multithread/bin/* /home/runner/Qt/6.11.0/gcc_64/bin/* 2>/dev/null || true
           echo "/home/runner/Qt/6.11.0/wasm_multithread/bin" >> $GITHUB_PATH
-          echo "/home/runner/Qt/6.11.0/gcc_64/bin" >> $GITHUB_PATH
           echo "Qt6_DIR=/home/runner/Qt/6.11.0/wasm_multithread/lib/cmake/Qt6" >> $GITHUB_ENV
           echo "QT_ROOT_DIR=/home/runner/Qt/6.11.0" >> $GITHUB_ENV
+          echo "QT_HOST_PATH=/home/runner/Qt/6.11.0/gcc_64" >> $GITHUB_ENV
 
       - name: Configure and Build WASM
         run: |
-          if command -v qt-cmake &> /dev/null; then
-            qt-cmake -B build-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release -DQT_NO_EMCC_VERSION_CHECK=ON
-          else
-            cmake -B build-wasm -G Ninja \
-              -DCMAKE_TOOLCHAIN_FILE=/home/runner/Qt/6.11.0/wasm_multithread/lib/cmake/Qt6/qt.toolchain.cmake \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DQT_NO_EMCC_VERSION_CHECK=ON
-          fi
-          cmake --build build-wasm --config Release
+          /home/runner/Qt/6.11.0/wasm_multithread/bin/qt-cmake -B build-wasm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQT_HOST_PATH=/home/runner/Qt/6.11.0/gcc_64 \
+            -DQT_NO_EMCC_VERSION_CHECK=ON
+
+          ninja -C build-wasm
 
           # Prepare web root and headers for Cloudflare Pages
           cp build-wasm/vesc_tool_7.00.html build-wasm/index.html
