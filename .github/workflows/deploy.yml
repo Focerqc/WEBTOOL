@@ -191,37 +191,6 @@ jobs:
             window.Module.print = function(text) { window.__logToScreen('[STDOUT] ' + text); origPrint(text); };
             window.Module.printErr = function(text) { window.__logToScreen('[STDERR] ' + text, 'red'); origPrintErr(text); };
 
-            // Wrap window.qtLoad if defined or when defined
-            let currentQtLoad = window.qtLoad;
-            Object.defineProperty(window, 'qtLoad', {
-              configurable: true,
-              enumerable: true,
-              get() { return currentQtLoad; },
-              set(fn) {
-                if (typeof fn === 'function') {
-                  currentQtLoad = async function(config) {
-                    config = config || {};
-                    const origStdout = config.stdout;
-                    const origStderr = config.stderr;
-                    config.stdout = function(text) {
-                      window.__logToScreen('[STDOUT] ' + text);
-                      if (origStdout) origStdout(text);
-                    };
-                    config.stderr = function(text) {
-                      window.__logToScreen('[STDERR] ' + text, 'red');
-                      if (origStderr) origStderr(text);
-                    };
-                    return fn(config);
-                  };
-                } else {
-                  currentQtLoad = fn;
-                }
-              }
-            });
-            if (typeof currentQtLoad === 'function') {
-              window.qtLoad = currentQtLoad;
-            }
-
             window.__logToScreen('Diagnostics overlay initialized successfully.');
           })();
           </script>
