@@ -50,12 +50,19 @@
 #include <QCanBus>
 #endif
 
+#if defined(__EMSCRIPTEN__) || defined(Q_OS_WASM)
+#include "wasm_serial_bridge.h"
+#endif
+
 #ifndef VT_INTRO_VERSION
 #define VT_INTRO_VERSION 1
 #endif
 
+VescInterface *VescInterface::sInstance = nullptr;
+
 VescInterface::VescInterface(QObject *parent) : QObject(parent)
 {
+    sInstance = this;
     mMcConfig = new ConfigParams(this);
     mAppConfig = new ConfigParams(this);
     mInfoConfig = new ConfigParams(this);
@@ -605,6 +612,17 @@ VescInterface::~VescInterface()
     }
 
     Utility::stopGnssForegroundService();
+
+    if (sInstance == this) {
+        sInstance = nullptr;
+    }
+}
+
+void VescInterface::processRawRx(const QByteArray &data)
+{
+    if (mPacket) {
+        mPacket->processData(data);
+    }
 }
 
 Commands *VescInterface::commands() const
@@ -2394,6 +2412,12 @@ bool VescInterface::connectSerial(QString port, int baudrate)
 {
 #ifdef HAS_SERIALPORT
     bool found = false;
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    if (port.contains("WebSerial", Qt::CaseInsensitive) || port.startsWith("webserial://")) {
+        found = true;
+        port = "WebSerial";
+    }
+#endif
     for (auto ser: listSerialPorts()) {
         VSerialInfo_t info = ser.value<VSerialInfo_t>();
 

@@ -298,6 +298,13 @@ public:
     Q_INVOKABLE bool scanCanOnConnect();
     Q_INVOKABLE void setScanCanOnConnect(bool set);
 
+    static VescInterface *instance() { return sInstance; }
+    Packet *packet() const { return mPacket; }
+#ifdef HAS_SERIALPORT
+    QSerialPort *serialPort() const { return mSerialPort; }
+#endif
+    void processRawRx(const QByteArray &data);
+
     Q_INVOKABLE bool showFwUpdateAvailable() const;
     Q_INVOKABLE void setShowFwUpdateAvailable(bool set);
 
@@ -516,6 +523,8 @@ private:
 
     void updateFwRx(bool fwRx);
     void setLastConnectionType(conn_t type);
+
+    static VescInterface *sInstance;
 
 };
 

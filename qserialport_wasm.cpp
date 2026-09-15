@@ -1,5 +1,6 @@
 #include "qserialport_wasm.h"
 #include "webserialbridge.h"
+#include "wasm_serial_bridge.h"
 #include <QDebug>
 #include <QCoreApplication>
 
@@ -273,8 +274,10 @@ bool QSerialPort::open(OpenMode mode)
     if (mPortId < 0) {
         setPortName(mPortName);
         if (mPortId < 0) {
-            // Default to first port if available
+            // Default to first port if available, or 0 for WebSerial mode
             if (webserial_get_port_count() > 0) {
+                mPortId = 0;
+            } else if (mPortName.contains("WebSerial", Qt::CaseInsensitive)) {
                 mPortId = 0;
             } else {
                 mLastError = DeviceNotFoundError;
@@ -288,7 +291,7 @@ bool QSerialPort::open(OpenMode mode)
     webserial_set_callbacks(mPortId, onRxDataStatic, onErrorStatic, this);
 
     int res = webserial_open(mPortId, mBaudRate, (int)mDataBits, (int)mStopBits, (int)mParity, (int)mFlowControl);
-    if (!res) {
+    if (!res && !mPortName.contains("WebSerial", Qt::CaseInsensitive)) {
         mLastError = OpenError;
         setErrorString("Failed to open WebSerial device.");
         emit errorOccurred(mLastError);
@@ -408,9 +411,12 @@ qint64 QSerialPort::readData(char *data, qint64 maxlen)
 
 qint64 QSerialPort::writeData(const char *data, qint64 len)
 {
-    if (mPortId < 0 || len <= 0) return 0;
-    int written = webserial_write(mPortId, reinterpret_cast<const uint8_t*>(data), static_cast<int>(len));
-    return written >= 0 ? written : 0;
+    if (len <= 0) return 0;
+    wasm_serial_tx(reinterpret_cast<const uint8_t*>(data), static_cast<int>(len));
+    if (mPortId >= 0) {
+        webserial_write(mPortId, reinterpret_cast<const uint8_t*>(data), static_cast<int>(len));
+    }
+    return len;
 }
 
 void QSerialPort::onRxDataStatic(int portId, void *userData)

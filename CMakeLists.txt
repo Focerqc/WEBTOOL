@@ -261,8 +261,8 @@ else()
     list(APPEND ROOT_HEADERS bleuartdummy.h)
 endif()
 if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
-    list(APPEND ROOT_SOURCES webserialbridge.cpp qserialport_wasm.cpp)
-    list(APPEND ROOT_HEADERS webserialbridge.h qserialport_wasm.h)
+    list(APPEND ROOT_SOURCES webserialbridge.cpp qserialport_wasm.cpp wasm_serial_bridge.cpp)
+    list(APPEND ROOT_HEADERS webserialbridge.h qserialport_wasm.h wasm_serial_bridge.h)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -1077,6 +1077,16 @@ endif()
 if(WIN32)
     set_target_properties(${APP_TARGET} PROPERTIES
         WIN32_EXECUTABLE TRUE
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# Emscripten / WebAssembly specific
+# ---------------------------------------------------------------------------
+if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
+    target_link_options(${APP_TARGET} PRIVATE
+        "SHELL:-s EXPORTED_FUNCTIONS=['_main','_wasm_serial_rx','_wasm_serial_set_connected']"
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','setValue','getValue']"
     )
 endif()
 

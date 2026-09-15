@@ -57,14 +57,48 @@ jobs:
           # Prepare web root and headers for Netlify / WebAssembly
           cp build-wasm/vesc_tool_7.00.html build-wasm/index.html
 
-          # Inject on-screen diagnostic HUD into index.html
+          # Inject on-screen diagnostic HUD and Web Serial bridge into index.html
           python3 - << 'EOF'
           import re
 
           with open('build-wasm/index.html', 'r', encoding='utf-8') as f:
               content = f.read()
 
-          # 1. Pass stdout and stderr hooks into the existing qtLoad call
+          # 1. Lock Viewport to Centered Smartphone Frame
+          phone_css = """<style>
+      /* Make html/body cover viewport with dark neutral letterboxing */
+      html, body {
+        padding: 0;
+        margin: 0;
+        overflow: hidden;
+        height: 100%;
+        background-color: #151515;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      /* Constrain screen container to centered portrait smartphone aspect */
+      #screen {
+        width: 100%;
+        max-width: 460px;
+        height: 100vh;
+        margin: 0 auto;
+        position: relative !important;
+        overflow: hidden;
+        box-shadow: 0 0 30px rgba(0,0,0,0.8);
+        background-color: #202020;
+      }
+      #qt-shadow-container, .qt-screen, canvas {
+        width: 100% !important;
+        max-width: 460px !important;
+        height: 100% !important;
+        max-height: 100vh !important;
+      }
+    </style>"""
+          content = re.sub(r'<style>.*?</style>', phone_css, content, flags=re.DOTALL)
+          print("Patched viewport CSS to 460px centered mobile frame")
+
+          # 2. Pass stdout and stderr hooks into the existing qtLoad call and capture instance
           def patch_qtload(m):
               return m.group(0) + """
                       stdout: function(text) { window.__logToScreen ? window.__logToScreen('[STDOUT] ' + text) : console.log(text); },
@@ -73,20 +107,31 @@ jobs:
           content, count = re.subn(r'qtLoad\s*\(\s*\{', patch_qtload, content, count=1)
           print(f"Patched qtLoad hooks in index.html (matches: {count})")
 
-          # 2. Inject overlay and scripts right before </body>
+          # Capture the Emscripten module instance from qtLoad
+          content = content.replace(
+              'const instance = await qtLoad(',
+              'const instance = window.Module = await qtLoad('
+          )
+
+          # 3. Inject overlay, Web Serial controls, and bridge scripts right before </body>
           hud_html = """
-          <!-- VESC Tool WASM Diagnostics Overlay -->
+          <!-- VESC Tool WASM Diagnostics & Web Serial Bridge Overlay -->
           <div id="vesc-diagnostics-overlay" style="position:fixed;bottom:0;left:0;right:0;max-height:250px;background:rgba(15,23,42,0.95);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;z-index:99999;border-top:2px solid #0284c7;display:flex;flex-direction:column;box-shadow:0 -4px 20px rgba(0,0,0,0.6);user-select:text;">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 10px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);font-size:11px;font-weight:600;">
-              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                <span style="color:#38bdf8;font-weight:bold;">🛠️ VESC Tool WASM Diagnostics</span>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="color:#38bdf8;font-weight:bold;">🛠️ VESC Tool WASM</span>
+                <button id="btn-webserial-connect" onclick="window.toggleWebSerial()" style="background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                  🔌 Connect USB (Web Serial)
+                </button>
+                <span>Serial: <span id="diag-val-serial-status" style="color:#94a3b8;">Disconnected</span></span>
+                <span>Baud: <span id="diag-val-serial-baud" style="color:#a5f3fc;">--</span></span>
+                <span>I/O: <span id="diag-val-serial-io" style="color:#cbd5e1;">RX: 0 B / TX: 0 B</span></span>
                 <span>COI: <span id="diag-val-coi">checking...</span></span>
-                <span>Concurrency: <span id="diag-val-cores" style="color:#a5f3fc;">...</span></span>
-                <span>Qt Status: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
+                <span>Qt: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
               </div>
               <div style="display:flex;gap:6px;">
                 <button onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
-                <button onclick="const o=document.getElementById('vesc-diagnostics-logs');o.style.display=o.style.display==='none'?'block':'none';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Toggle</button>
+                <button onclick="const o=document.getElementById('vesc-diagnostics-logs');o.style.display=o.style.display==='none'?'block':'none';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Toggle Logs</button>
               </div>
             </div>
             <div id="vesc-diagnostics-logs" style="flex:1;overflow-y:auto;max-height:215px;padding:6px 10px;line-height:1.45;word-break:break-all;white-space:pre-wrap;"></div>
@@ -134,10 +179,6 @@ jobs:
                 coiEl.innerHTML = window.crossOriginIsolated
                   ? '<span style="color:#4ade80;font-weight:bold;">true (Isolated)</span>'
                   : '<span style="color:#f87171;font-weight:bold;">false (NOT Isolated - SAB Disabled!)</span>';
-              }
-              const coresEl = document.getElementById('diag-val-cores');
-              if (coresEl) {
-                coresEl.textContent = (navigator.hardwareConcurrency || 'unknown') + ' cores';
               }
               const qtEl = document.getElementById('diag-val-qt');
               if (qtEl) {
@@ -191,25 +232,213 @@ jobs:
             window.Module.print = function(text) { window.__logToScreen('[STDOUT] ' + text); origPrint(text); };
             window.Module.printErr = function(text) { window.__logToScreen('[STDERR] ' + text, 'red'); origPrintErr(text); };
 
-            window.__logToScreen('Diagnostics overlay initialized successfully.');
+            // 3. Web Serial API Integration
+            let serialPort = null;
+            let serialReader = null;
+            let serialWriter = null;
+            let isSerialConnected = false;
+            let bytesRx = 0;
+            let bytesTx = 0;
+
+            function formatBytes(bytes) {
+              if (bytes < 1024) return bytes + ' B';
+              if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+              return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+            }
+
+            function updateSerialHud() {
+              const btn = document.getElementById('btn-webserial-connect');
+              const statusEl = document.getElementById('diag-val-serial-status');
+              const baudEl = document.getElementById('diag-val-serial-baud');
+              const ioEl = document.getElementById('diag-val-serial-io');
+
+              if (statusEl) {
+                statusEl.innerHTML = isSerialConnected
+                  ? '<span style="color:#4ade80;font-weight:bold;">Connected</span>'
+                  : '<span style="color:#94a3b8;">Disconnected</span>';
+              }
+              if (baudEl) {
+                baudEl.textContent = isSerialConnected ? '115200' : '--';
+              }
+              if (ioEl) {
+                ioEl.textContent = 'RX: ' + formatBytes(bytesRx) + ' / TX: ' + formatBytes(bytesTx);
+              }
+              if (btn) {
+                if (isSerialConnected) {
+                  btn.textContent = '🔌 Disconnect USB';
+                  btn.style.background = '#dc2626';
+                  btn.style.borderColor = '#b91c1c';
+                } else {
+                  btn.textContent = '🔌 Connect USB (Web Serial)';
+                  btn.style.background = '#0284c7';
+                  btn.style.borderColor = '#0369a1';
+                }
+              }
+            }
+
+            window.toggleWebSerial = async function() {
+              if (isSerialConnected) {
+                await disconnectWebSerial();
+              } else {
+                await connectWebSerial();
+              }
+            };
+
+            async function connectWebSerial() {
+              if (!('serial' in navigator)) {
+                window.__logToScreen('[SERIAL ERROR] Web Serial API is not supported in this browser. Please use Chrome, Edge, or Opera.', '#f87171');
+                alert('Web Serial API is not supported in this browser.\\nPlease use Google Chrome, Microsoft Edge, or a Chromium-based browser.');
+                return;
+              }
+
+              try {
+                window.__logToScreen('[SERIAL] Requesting USB serial device...');
+                serialPort = await navigator.serial.requestPort({ filters: [] });
+                window.__logToScreen('[SERIAL] Opening port at 115200 baud (ESP32 VESC Express standard)...');
+                await serialPort.open({ baudRate: 115200 });
+
+                isSerialConnected = true;
+                if (serialPort.writable) {
+                  serialWriter = serialPort.writable.getWriter();
+                }
+
+                updateSerialHud();
+                window.__logToScreen('[SERIAL] Connected successfully at 115200 baud.', '#4ade80');
+
+                // Notify WASM module of connection
+                notifyWasmConnection(1);
+
+                // Start reading loop
+                readSerialLoop();
+              } catch (err) {
+                window.__logToScreen('[SERIAL ERROR] Connection failed: ' + (err.message || err), '#f87171');
+                await disconnectWebSerial();
+              }
+            }
+
+            async function readSerialLoop() {
+              while (serialPort && serialPort.readable && isSerialConnected) {
+                try {
+                  serialReader = serialPort.readable.getReader();
+                  while (isSerialConnected) {
+                    const { value, done } = await serialReader.read();
+                    if (done) break;
+                    if (value && value.length > 0) {
+                      bytesRx += value.length;
+                      updateSerialHud();
+
+                      // Feed raw bytes into wasm_serial_rx
+                      if (window.Module && typeof window.Module.ccall === 'function') {
+                        window.Module.ccall('wasm_serial_rx', null, ['array', 'number'], [value, value.length]);
+                      } else if (window.Module && typeof window.Module._wasm_serial_rx === 'function') {
+                        const ptr = window.Module._malloc(value.length);
+                        window.Module.HEAPU8.set(value, ptr);
+                        window.Module._wasm_serial_rx(ptr, value.length);
+                        window.Module._free(ptr);
+                      }
+                    }
+                  }
+                } catch (err) {
+                  if (isSerialConnected) {
+                    window.__logToScreen('[SERIAL RX ERROR] ' + (err.message || err), '#f87171');
+                  }
+                  break;
+                } finally {
+                  if (serialReader) {
+                    try { serialReader.releaseLock(); } catch (_) {}
+                    serialReader = null;
+                  }
+                }
+              }
+
+              if (isSerialConnected) {
+                disconnectWebSerial();
+              }
+            }
+
+            async function disconnectWebSerial() {
+              isSerialConnected = false;
+              window.__logToScreen('[SERIAL] Disconnecting serial port...');
+
+              try {
+                if (serialReader) {
+                  await serialReader.cancel();
+                  serialReader.releaseLock();
+                  serialReader = null;
+                }
+              } catch (_) {}
+
+              try {
+                if (serialWriter) {
+                  serialWriter.releaseLock();
+                  serialWriter = null;
+                }
+              } catch (_) {}
+
+              try {
+                if (serialPort) {
+                  await serialPort.close();
+                  serialPort = null;
+                }
+              } catch (_) {}
+
+              notifyWasmConnection(0);
+              updateSerialHud();
+              window.__logToScreen('[SERIAL] Disconnected.');
+            }
+
+            function notifyWasmConnection(connected) {
+              if (window.Module && typeof window.Module.ccall === 'function') {
+                try {
+                  window.Module.ccall('wasm_serial_set_connected', null, ['number'], [connected]);
+                } catch (e) {
+                  window.__logToScreen('[SERIAL WARN] wasm_serial_set_connected failed: ' + e, '#facc15');
+                }
+              }
+            }
+
+            // Expose outgoing serial TX hook for C++ wasm_serial_tx
+            window.wasm_serial_tx = async function(chunk) {
+              if (!serialWriter || !isSerialConnected) return;
+              try {
+                await serialWriter.write(chunk);
+                bytesTx += chunk.length;
+                updateSerialHud();
+              } catch (err) {
+                window.__logToScreen('[SERIAL TX ERROR] ' + (err.message || err), '#f87171');
+              }
+            };
+
+            // Listen for device plug/unplug events
+            if ('serial' in navigator) {
+              navigator.serial.addEventListener('disconnect', (event) => {
+                if (serialPort && event.target === serialPort) {
+                  window.__logToScreen('[SERIAL] Device unplugged.', '#facc15');
+                  disconnectWebSerial();
+                }
+              });
+            }
+
+            window.__logToScreen('Diagnostics & Web Serial overlay initialized.');
           })();
           </script>
           """
 
           if '</body>' in content:
               content = content.replace('</body>', hud_html + '\n</body>')
-              print("Injected diagnostics HUD before </body>")
+              print("Injected diagnostics & Web Serial HUD before </body>")
           elif '</BODY>' in content:
               content = content.replace('</BODY>', hud_html + '\n</BODY>')
-              print("Injected diagnostics HUD before </BODY>")
+              print("Injected diagnostics & Web Serial HUD before </BODY>")
           else:
               content += hud_html
-              print("Appended diagnostics HUD to HTML")
+              print("Appended diagnostics & Web Serial HUD to HTML")
 
           with open('build-wasm/index.html', 'w', encoding='utf-8') as f:
               f.write(content)
           print("Finished patching build-wasm/index.html")
           EOF
+
 
           echo "/*" > build-wasm/_headers
           echo "  Cross-Origin-Opener-Policy: same-origin" >> build-wasm/_headers
