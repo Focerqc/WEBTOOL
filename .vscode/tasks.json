@@ -6,7 +6,12 @@
       "type": "shell",
       "command": "ninja",
       "options": {
-        "cwd": "${workspaceFolder}/build-wasm"
+        "cwd": "${workspaceFolder}/build-wasm",
+        "env": {
+          "EMSDK": "C:\\emsdk",
+          "EM_CONFIG": "C:\\emsdk\\.emscripten",
+          "PATH": "C:\\emsdk;C:\\emsdk\\upstream\\emscripten;C:\\Qt\\6.11.0\\wasm_multithread\\bin;${env:PATH}"
+        }
       },
       "group": {
         "kind": "build",
