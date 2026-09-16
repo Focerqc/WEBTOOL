@@ -19,6 +19,7 @@
 
 #include "qmlui.h"
 #include "rtdatastore.h"
+#include "esp32/esp32flash.h"
 
 #include <QQuickStyle>
 #include <QApplication>
@@ -51,6 +52,7 @@ bool QmlUi::startQmlUi()
     mEngine->rootContext()->setContextProperty("Utility", new Utility(this));
     mEngine->rootContext()->setContextProperty("RtDataStore",
         new RtDataStore(mVesc->commands(), this));
+    mEngine->rootContext()->setContextProperty("Esp32Flash", new Esp32Flash(this));
 
     mEngine->addImportPath(QStringLiteral("qrc:/"));
 
@@ -77,6 +79,7 @@ bool QmlUi::startDesktopQmlUi()
     mEngine->rootContext()->setContextProperty("Utility", new Utility(this));
     mEngine->rootContext()->setContextProperty("RtDataStore",
         new RtDataStore(mVesc->commands(), this));
+    mEngine->rootContext()->setContextProperty("Esp32Flash", new Esp32Flash(this));
 
     // Add import path so desktop pages can resolve mobile components
     mEngine->addImportPath(QStringLiteral("qrc:/"));

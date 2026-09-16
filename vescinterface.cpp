@@ -1311,6 +1311,18 @@ bool VescInterface::swdReboot()
     return true;
 }
 
+bool VescInterface::swdUploadFromFile(QString path, uint32_t startAddr, bool verify)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emitMessageDialog("SWD Upload", "Could not open file: " + path, false, false);
+        return false;
+    }
+    QByteArray data = file.readAll();
+    file.close();
+    return swdUploadFw(data, startAddr, verify);
+}
+
 bool VescInterface::fwEraseNewApp(bool fwdCan, quint32 fwSize)
 {
     auto waitEraseRes = [this]() {

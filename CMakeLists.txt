@@ -901,6 +901,9 @@ qt_target_qml_sources(${APP_TARGET}
         desktop/CanAnalyzerPage.qml
         desktop/DisplayToolPage.qml
         desktop/PlotLegend.qml
+        desktop/DebugConsolePage.qml
+        desktop/SwdProgPage.qml
+        desktop/EspProgPage.qml
 )
 
 # ---------------------------------------------------------------------------

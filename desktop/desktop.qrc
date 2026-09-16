@@ -39,5 +39,8 @@
         <file>MotorComparisonPage.qml</file>
         <file>CanAnalyzerPage.qml</file>
         <file>DisplayToolPage.qml</file>
+        <file>DebugConsolePage.qml</file>
+        <file>SwdProgPage.qml</file>
+        <file>EspProgPage.qml</file>
     </qresource>
 </RCC>

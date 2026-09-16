@@ -1028,11 +1028,11 @@ ApplicationWindow {
         addPage("LispBM Scripting", "icons_textedit/Outdent-96.png", "", false, true, "LispPage.qml", "lisp", true)
         addPage("CAN Tools", "icons/can_off.png", "", false, true, "CanAnalyzerPage.qml", "can_tools", true)
         addPage("Display Tool", "icons/Calculator-96.png", "", false, true, "DisplayToolPage.qml", "display_tool", true)
-        addPage("Debug Console", "icons/Bug-96.png", "", false, true, "", "debug_console", true)
+        addPage("Debug Console", "icons/Bug-96.png", "", false, true, "DebugConsolePage.qml", "debug_console", true)
 
         // --- Programmer pages ---
-        addPage("SWD Programmer", "icons/Electronics-96.png", "", true, false, "", "swd_prog", true)
-        addPage("ESP Programmer", "icons/Electronics-96.png", "", true, false, "", "esp_prog", true)
+        addPage("SWD Programmer", "icons/Electronics-96.png", "", true, false, "SwdProgPage.qml", "swd_prog", true)
+        addPage("ESP Programmer", "icons/Electronics-96.png", "", true, false, "EspProgPage.qml", "esp_prog", true)
 
         // Initialize CAN list with local entry
         canModel.clear()

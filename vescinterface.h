@@ -133,11 +133,12 @@ public:
 #endif
 
     // SWD Programming
-    bool swdEraseFlash();
-    bool swdUploadFw(QByteArray newFirmware, uint32_t startAddr = 0,
-                     bool verify = false, bool isLzo = true);
-    void swdCancel();
-    bool swdReboot();
+    Q_INVOKABLE bool swdEraseFlash();
+    Q_INVOKABLE bool swdUploadFw(QByteArray newFirmware, uint32_t startAddr = 0,
+                                 bool verify = false, bool isLzo = true);
+    Q_INVOKABLE void swdCancel();
+    Q_INVOKABLE bool swdReboot();
+    Q_INVOKABLE bool swdUploadFromFile(QString path, uint32_t startAddr = 0, bool verify = false);
 
     // Firmware Updates
     bool fwEraseNewApp(bool fwdCan, quint32 fwSize);
