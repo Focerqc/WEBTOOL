@@ -1,0 +1,699 @@
+#!/usr/bin/env python3
+"""
+Patches the Qt WebAssembly HTML output with:
+- Centered smartphone mobile viewport (480px) & Desktop toggle
+- Bottom diagnostics HUD bar with WebSerial USB Connect button
+- Real-time telemetry, baud rate, and I/O byte counters
+- Side drawer diagnostics & system log viewer
+"""
+
+import os
+import sys
+import re
+
+def patch_html(build_dir="build-wasm"):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    target_dir = os.path.join(script_dir, build_dir) if not os.path.isabs(build_dir) else build_dir
+    
+    html_src = os.path.join(target_dir, "vesc_tool_7.00.html")
+    if not os.path.exists(html_src):
+        # Check if index.html exists
+        index_candidate = os.path.join(target_dir, "index.html")
+        if os.path.exists(index_candidate):
+            html_src = index_candidate
+        else:
+            print(f"[PATCH ERROR] Cannot find vesc_tool_7.00.html or index.html in {target_dir}")
+            return False
+
+    with open(html_src, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Check if already patched
+    if "vesc-diagnostics-bar" in content and "viewport-mobile" in content:
+        print("[PATCH] HTML is already patched.")
+        # Ensure index.html exists and is up to date
+        index_dst = os.path.join(target_dir, "index.html")
+        with open(index_dst, "w", encoding="utf-8") as f:
+            f.write(content)
+        return True
+
+    # 1. Viewport Styling for Mobile (480px) and Desktop (100vw)
+    viewport_css = """<style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+      background-color: #121212 !important;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      height: 100vh;
+      overflow-y: hidden;
+    }
+    #qt-container.viewport-mobile {
+      max-width: 480px;
+      width: 100%;
+      height: calc(100vh - 42px);
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 0 30px rgba(0,0,0,0.8);
+      background-color: #202020;
+    }
+    #qt-container.viewport-desktop {
+      max-width: 100vw !important;
+      width: 100vw !important;
+      height: calc(100vh - 42px) !important;
+      margin: 0 !important;
+      position: relative;
+      box-shadow: none;
+      background-color: #202020;
+    }
+    #qtcanvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+    #qt-shadow-container, .qt-screen, #qt-container canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+    #qtspinner {
+      position: absolute !important;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      margin: 0 !important;
+      pointer-events: none !important;
+      z-index: 50 !important;
+    }
+    @media (max-width: 960px) {
+      #vesc-diagnostics-logs-panel {
+        max-width: calc(100vw - 20px) !important;
+        width: 380px !important;
+        min-width: 280px !important;
+        right: 10px !important;
+      }
+    }
+    </style>"""
+    content = re.sub(r'<style>.*?</style>', viewport_css, content, flags=re.DOTALL)
+
+    # Replace #screen container with #qt-container (defaulting to viewport-mobile)
+    content = content.replace(
+        '<div id="screen"></div>',
+        '<div id="qt-container" class="viewport-mobile"></div>'
+    )
+    content = content.replace(
+        "const screen = document.querySelector('#screen');",
+        "const screen = document.querySelector('#qt-container');"
+    )
+    content = content.replace(
+        'onLoaded: () => showUi(screen),',
+        'onLoaded: () => { showUi(screen); const c = document.querySelector("#qt-container canvas") || document.querySelector("canvas"); if (c) c.id = "qtcanvas"; [10, 100, 300].forEach(delay => setTimeout(() => window.dispatchEvent(new Event("resize")), delay)); },'
+    )
+
+    # 2. Pass stdout and stderr hooks into qtLoad
+    def patch_qtload(m):
+        return m.group(0) + """
+                stdout: function(val) {
+                    if (typeof val === 'number') {
+                        if (val === 10) {
+                            if (window.__logToScreen) window.__logToScreen('[STDOUT] ' + (window.__stdoutBuf || ''));
+                            window.__stdoutBuf = '';
+                        } else {
+                            window.__stdoutBuf = (window.__stdoutBuf || '') + String.fromCharCode(val);
+                        }
+                    } else if (typeof val === 'string') {
+                        if (window.__logToScreen) window.__logToScreen('[STDOUT] ' + val);
+                    }
+                },
+                stderr: function(val) {
+                    if (typeof val === 'number') {
+                        if (val === 10) {
+                            if (window.__logToScreen) window.__logToScreen('[STDERR] ' + (window.__stderrBuf || ''), 'red');
+                            window.__stderrBuf = '';
+                        } else {
+                            window.__stderrBuf = (window.__stderrBuf || '') + String.fromCharCode(val);
+                        }
+                    } else if (typeof val === 'string') {
+                        if (window.__logToScreen) window.__logToScreen('[STDERR] ' + val, 'red');
+                    }
+                },"""
+
+    content, _ = re.subn(r'qtLoad\s*\(\s*\{', patch_qtload, content, count=1)
+
+    # Capture the Emscripten module instance from qtLoad
+    content = content.replace(
+        'const instance = await qtLoad(',
+        'const instance = window.Module = await qtLoad('
+    )
+
+    # 3. Inject HUD, Web Serial controls, and bridge scripts
+    hud_html = """
+    <!-- VESC Tool WASM Diagnostics Bottom Bar -->
+    <div id="vesc-diagnostics-bar" style="z-index:100000;position:relative;pointer-events:auto;width:100%;height:42px;flex-shrink:0;background:rgba(15,23,42,0.98);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;border-top:1px solid #0284c7;display:flex;align-items:center;justify-content:space-between;padding:0 10px;box-sizing:border-box;box-shadow:0 -2px 10px rgba(0,0,0,0.5);user-select:none;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:visible;height:100%;position:relative;z-index:100000;pointer-events:auto;">
+        <span style="color:#38bdf8;font-weight:bold;white-space:nowrap;">🛠️ VESC Tool WASM</span>
+        <button id="btn-webserial-connect" type="button" onclick="window.toggleWebSerial()" style="position:relative;z-index:100002;pointer-events:auto;background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+          🔌 Connect USB (Web Serial)
+        </button>
+        <button id="btn-viewport-toggle" type="button" onclick="window.toggleViewportMode()" style="position:relative;z-index:100002;pointer-events:auto;background:#334155;border:1px solid #475569;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📱 View: Mobile</button>
+        <span style="white-space:nowrap;">Serial: <span id="diag-val-serial-status" style="color:#94a3b8;">Disconnected</span></span>
+        <span style="white-space:nowrap;">Baud: <span id="diag-val-serial-baud" style="color:#a5f3fc;">--</span></span>
+        <span style="white-space:nowrap;">I/O: <span id="diag-val-serial-io" style="color:#cbd5e1;">RX: 0 B / TX: 0 B</span></span>
+        <span style="white-space:nowrap;">COI: <span id="diag-val-coi">checking...</span></span>
+        <span style="white-space:nowrap;">Qt: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;position:relative;z-index:100000;pointer-events:auto;">
+        <button type="button" onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
+        <button id="btn-toggle-logs" type="button" onclick="window.toggleLogsPanel()" style="background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:3px 10px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;white-space:nowrap;">Toggle Logs 📑</button>
+      </div>
+    </div>
+
+    <!-- Side Log Panel -->
+    <div id="vesc-diagnostics-logs-panel" style="display:none;position:fixed;top:10px;right:10px;bottom:50px;width:520px;max-width:calc(50vw - 245px);min-width:320px;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid rgba(2,132,199,0.4);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);z-index:100000;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;color:#e2e8f0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);border-radius:8px 8px 0 0;font-weight:600;">
+        <span style="color:#38bdf8;font-size:11px;">📋 VESC Telemetry & System Logs</span>
+        <div style="display:flex;gap:6px;">
+          <button onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
+          <button onclick="window.toggleLogsPanel()" style="background:#dc2626;border:1px solid #b91c1c;color:#ffffff;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">✖ Close</button>
+        </div>
+      </div>
+      <div id="vesc-diagnostics-logs" style="flex:1;overflow-y:auto;padding:8px 12px;line-height:1.45;word-break:break-all;white-space:pre-wrap;"></div>
+    </div>
+    <script>
+    (function() {
+      const logContainer = document.getElementById('vesc-diagnostics-logs');
+
+      window.toggleLogsPanel = function() {
+        const p = document.getElementById('vesc-diagnostics-logs-panel');
+        if (!p) return;
+        const isHidden = (p.style.display === 'none' || !p.style.display);
+        p.style.display = isHidden ? 'flex' : 'none';
+      };
+
+      function isFilteredMessage(text) {
+        if (typeof text !== 'string') return false;
+        return text.includes('Failed to link shader program') ||
+               text.includes('Failed to build graphics pipeline state') ||
+               text.includes('res//primitives/Cube.mesh') ||
+               text.includes('Failed to load mesh');
+      }
+
+      function bytesToHex(arr) {
+        if (!arr || !arr.length) return '';
+        const hex = [];
+        for (let i = 0; i < arr.length; i++) {
+          hex.push(arr[i].toString(16).padStart(2, '0'));
+        }
+        return hex.join(' ');
+      }
+
+      window.__logToScreen = function(text, color) {
+        if (!logContainer || isFilteredMessage(text)) return;
+        const item = document.createElement('div');
+        item.style.padding = '1px 0';
+        item.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+        if (color) {
+          item.style.color = color;
+        } else if (typeof text === 'string' && (text.includes('[STDERR]') || text.includes('[ERROR]'))) {
+          item.style.color = '#f87171';
+        } else if (typeof text === 'string' && text.includes('[WARN]')) {
+          item.style.color = '#facc15';
+        } else {
+          item.style.color = '#cbd5e1';
+        }
+        const ts = new Date().toTimeString().split(' ')[0] + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+        item.textContent = '[' + ts + '] ' + text;
+        logContainer.appendChild(item);
+        logContainer.scrollTop = logContainer.scrollHeight;
+      };
+
+      // 1. Live status monitors
+      function getQtStatus() {
+        const el = document.getElementById('qtstatus') || document.querySelector('.qtstatus');
+        if (el && el.innerText && el.innerText.trim().length > 0) {
+          return el.innerText.trim();
+        }
+        const spinner = document.getElementById('qtspinner');
+        if (spinner && spinner.style.display !== 'none') {
+          return 'Loading / Compiling...';
+        }
+        return 'Running / Ready';
+      }
+
+      function updateHud() {
+        const coiEl = document.getElementById('diag-val-coi');
+        if (coiEl) {
+          coiEl.innerHTML = window.crossOriginIsolated
+            ? '<span style="color:#4ade80;font-weight:bold;">true (Isolated)</span>'
+            : '<span style="color:#f87171;font-weight:bold;">false (NOT Isolated - SAB Disabled!)</span>';
+        }
+        const qtEl = document.getElementById('diag-val-qt');
+        if (qtEl) {
+          qtEl.textContent = getQtStatus();
+        }
+      }
+      updateHud();
+      setInterval(updateHud, 500);
+
+      // 2. Global log redirection
+      const origLog = console.log;
+      const origWarn = console.warn;
+      const origError = console.error;
+
+      console.log = function(...args) {
+        const joined = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+        if (!isFilteredMessage(joined)) {
+          try {
+            window.__logToScreen(joined);
+          } catch (_) {}
+        }
+        origLog.apply(console, args);
+      };
+
+      console.warn = function(...args) {
+        const joined = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+        if (!isFilteredMessage(joined)) {
+          try {
+            window.__logToScreen('[WARN] ' + joined, '#facc15');
+          } catch (_) {}
+        }
+        origWarn.apply(console, args);
+      };
+
+      console.error = function(...args) {
+        const joined = args.map(a => (a instanceof Error ? (a.stack || a.message) : (typeof a === 'object' ? JSON.stringify(a) : String(a)))).join(' ');
+        if (!isFilteredMessage(joined)) {
+          try {
+            window.__logToScreen('[ERROR] ' + joined, '#f87171');
+          } catch (_) {}
+        }
+        origError.apply(console, args);
+      };
+
+      window.onerror = function(msg, url, line, col, error) {
+        const errText = error ? (error.stack || error.message) : (msg + ' (' + url + ':' + line + ':' + col + ')');
+        if (!isFilteredMessage(errText)) {
+          window.__logToScreen('[UNCAUGHT ERROR] ' + errText, '#ef4444');
+        }
+        return false;
+      };
+
+      window.onunhandledrejection = function(event) {
+        const reason = event.reason ? (event.reason.stack || event.reason.message || event.reason) : 'Unknown Promise Rejection';
+        if (!isFilteredMessage(String(reason))) {
+          window.__logToScreen('[UNHANDLED REJECTION] ' + reason, '#ef4444');
+        }
+      };
+
+      // Module hooks
+      window.Module = window.Module || {};
+      var stdoutBuffer = '';
+      var stderrBuffer = '';
+
+      window.Module.stdout = function(charCode) {
+        if (typeof charCode === 'number') {
+          if (charCode === 10) {
+            if (!isFilteredMessage(stdoutBuffer)) {
+              window.__logToScreen('[STDOUT] ' + stdoutBuffer);
+            }
+            stdoutBuffer = '';
+          } else {
+            stdoutBuffer += String.fromCharCode(charCode);
+          }
+        } else if (typeof charCode === 'string') {
+          if (!isFilteredMessage(charCode)) {
+            window.__logToScreen('[STDOUT] ' + charCode);
+          }
+        }
+      };
+
+      window.Module.stderr = function(charCode) {
+        if (typeof charCode === 'number') {
+          if (charCode === 10) {
+            if (!isFilteredMessage(stderrBuffer)) {
+              window.__logToScreen('[STDERR] ' + stderrBuffer, 'red');
+            }
+            stderrBuffer = '';
+          } else {
+            stderrBuffer += String.fromCharCode(charCode);
+          }
+        } else if (typeof charCode === 'string') {
+          if (!isFilteredMessage(charCode)) {
+            window.__logToScreen('[STDERR] ' + charCode, 'red');
+          }
+        }
+      };
+
+      const origPrint = window.Module.print || console.log;
+      const origPrintErr = window.Module.printErr || console.error;
+      window.Module.print = function(text) {
+        if (typeof text === 'string') {
+          if (!isFilteredMessage(text)) {
+            window.__logToScreen('[STDOUT] ' + text);
+          }
+        }
+        origPrint(text);
+      };
+      window.Module.printErr = function(text) {
+        if (typeof text === 'string') {
+          if (!isFilteredMessage(text)) {
+            window.__logToScreen('[STDERR] ' + text, 'red');
+          }
+        }
+        origPrintErr(text);
+      };
+
+      // 3. Web Serial API Integration
+      let serialPort = null;
+      let serialReader = null;
+      let serialWriter = null;
+      let isSerialConnected = false;
+      let bytesRx = 0;
+      let bytesTx = 0;
+      let txBytes = 0;
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+
+      function updateSerialHud() {
+        const btn = document.getElementById('btn-webserial-connect');
+        const statusEl = document.getElementById('diag-val-serial-status');
+        const baudEl = document.getElementById('diag-val-serial-baud');
+        const ioEl = document.getElementById('diag-val-serial-io');
+
+        if (statusEl) {
+          statusEl.innerHTML = isSerialConnected
+            ? '<span style="color:#4ade80;font-weight:bold;">Connected</span>'
+            : '<span style="color:#94a3b8;">Disconnected</span>';
+        }
+        if (baudEl) {
+          baudEl.textContent = isSerialConnected ? '115200' : '--';
+        }
+        if (ioEl) {
+          ioEl.textContent = 'RX: ' + formatBytes(bytesRx) + ' / TX: ' + formatBytes(bytesTx || txBytes);
+        }
+        if (btn) {
+          if (isSerialConnected) {
+            btn.textContent = '🔌 Disconnect USB';
+            btn.style.background = '#dc2626';
+            btn.style.borderColor = '#b91c1c';
+          } else {
+            btn.textContent = '🔌 Connect USB (Web Serial)';
+            btn.style.background = '#0284c7';
+            btn.style.borderColor = '#0369a1';
+          }
+        }
+      }
+
+      function updateHudCounters() {
+        updateSerialHud();
+      }
+      window.updateHudCounters = updateHudCounters;
+
+      window.toggleWebSerial = async function() {
+        window.__logToScreen('[SERIAL] Connect USB button triggered (isSerialConnected=' + isSerialConnected + ')');
+        if (isSerialConnected) {
+          await disconnectWebSerial();
+        } else {
+          await connectWebSerial();
+        }
+      };
+
+      async function connectWebSerial() {
+        if (!('serial' in navigator)) {
+          window.__logToScreen('[SERIAL ERROR] Web Serial API is not supported in this browser. Please use Chrome, Edge, or Opera.', '#f87171');
+          alert('Web Serial API is not supported in this browser.\\nPlease use Google Chrome, Microsoft Edge, or a Chromium-based browser.');
+          return;
+        }
+
+        try {
+          window.__logToScreen('[SERIAL] Requesting USB serial device via browser dialog...');
+          serialPort = await navigator.serial.requestPort();
+          if (serialPort && (serialPort.readable || serialPort.writable)) {
+            console.log("[SERIAL] Port is already open, skipping open call.");
+            window.__logToScreen('[SERIAL] Port is already open, skipping open call.');
+          } else {
+            window.__logToScreen('[SERIAL] Opening port at 115200 baud (ESP32 VESC Express standard)...');
+            await serialPort.open({ baudRate: 115200 });
+          }
+
+          isSerialConnected = true;
+          if (serialPort.writable) {
+            serialWriter = serialPort.writable.getWriter();
+          }
+
+          updateSerialHud();
+          window.__logToScreen('[SERIAL] Connected successfully at 115200 baud.', '#4ade80');
+
+          // Notify WASM module of connection
+          notifyWasmConnection(1);
+
+          // Start reading loop
+          readSerialLoop();
+        } catch (err) {
+          window.__logToScreen('[SERIAL ERROR] Connection failed: ' + (err.message || err), '#f87171');
+          await disconnectWebSerial();
+        }
+      }
+
+      async function readSerialLoop() {
+        while (serialPort && serialPort.readable && isSerialConnected) {
+          try {
+            serialReader = serialPort.readable.getReader();
+            while (isSerialConnected) {
+              const { value, done } = await serialReader.read();
+              if (done) break;
+              if (value && value.length > 0) {
+                bytesRx += value.length;
+                updateSerialHud();
+
+                const hexStr = bytesToHex(value);
+                window.__logToScreen(`[SERIAL RX] (${value.length} bytes): ${hexStr}`, '#a5f3fc');
+
+                // Feed raw bytes into wasm_serial_rx via EM_JS bridge
+                if (window.__wasm_serial_feed_rx) {
+                  window.__wasm_serial_feed_rx(value);
+                } else if (window.Module && typeof window.Module._wasm_serial_rx === 'function') {
+                  const ptr = window.Module._malloc(value.length);
+                  if (ptr % 8 !== 0) {
+                    console.error('[SERIAL ERROR] Unaligned pointer returned by Module._malloc:', ptr, 'len:', value.length);
+                    window.__logToScreen(`[SERIAL ERROR] Unaligned pointer returned by Module._malloc: ${ptr} (alignment: ${ptr % 8})`, '#f87171');
+                  }
+                  window.Module.HEAPU8.set(value, ptr);
+                  window.Module._wasm_serial_rx(ptr, value.length);
+                  window.Module._free(ptr);
+                }
+              }
+            }
+          } catch (err) {
+            if (isSerialConnected) {
+              window.__logToScreen('[SERIAL RX ERROR] ' + (err.message || err), '#f87171');
+            }
+            break;
+          } finally {
+            if (serialReader) {
+              try { serialReader.releaseLock(); } catch (_) {}
+              serialReader = null;
+            }
+          }
+        }
+
+        if (isSerialConnected) {
+          disconnectWebSerial();
+        }
+      }
+
+      async function disconnectWebSerial() {
+        isSerialConnected = false;
+        window.__logToScreen('[SERIAL] Disconnecting serial port...');
+
+        try {
+          if (serialReader) {
+            await serialReader.cancel();
+            serialReader.releaseLock();
+            serialReader = null;
+          }
+        } catch (_) {}
+
+        try {
+          if (serialWriter) {
+            serialWriter.releaseLock();
+            serialWriter = null;
+          }
+        } catch (_) {}
+
+        try {
+          if (serialPort) {
+            await serialPort.close();
+            serialPort = null;
+          }
+        } catch (_) {}
+
+        notifyWasmConnection(0);
+        updateSerialHud();
+        window.__logToScreen('[SERIAL] Disconnected.');
+      }
+
+      function notifyWasmConnection(connected) {
+        if (typeof window.__wasm_serial_set_connected_js === 'function') {
+          window.__wasm_serial_set_connected_js(connected ? true : false);
+        } else if (window.Module && typeof window.Module._wasm_serial_set_connected === 'function') {
+          window.Module._wasm_serial_set_connected(connected ? 1 : 0);
+        }
+      }
+
+      // Expose outgoing serial TX hook for C++ wasm_serial_tx
+      window.wasm_serial_tx = async function(uint8Array) {
+        if (serialWriter) {
+          try {
+            const data = (uint8Array && uint8Array.buffer && uint8Array.buffer instanceof SharedArrayBuffer)
+              ? new Uint8Array(uint8Array)
+              : (uint8Array instanceof Uint8Array ? uint8Array : new Uint8Array(uint8Array));
+
+            const hexStr = bytesToHex(data);
+            window.__logToScreen(`[SERIAL TX] (${data.length} bytes): ${hexStr}`, '#86efac');
+
+            await serialWriter.write(data);
+            bytesTx += data.length;
+            txBytes = bytesTx;
+            updateHudCounters();
+          } catch (err) {
+            console.error('[SERIAL TX ERROR]', err);
+            window.__logToScreen('[SERIAL TX ERROR] ' + (err.message || err), '#f87171');
+          }
+        }
+      };
+
+      // Listen for device plug/unplug events
+      if ('serial' in navigator) {
+        navigator.serial.addEventListener('disconnect', (event) => {
+          if (serialPort && event.target === serialPort) {
+            window.__logToScreen('[SERIAL] Device unplugged.', '#facc15');
+            disconnectWebSerial();
+          }
+        });
+      }
+
+      // Viewport mode toggle function and initial mode detection
+      window.toggleViewportMode = function() {
+        const container = document.getElementById('qt-container');
+        const btn = document.getElementById('btn-viewport-toggle');
+        if (!container) return;
+
+        const isMobile = container.classList.contains('viewport-mobile');
+        if (isMobile) {
+          container.classList.remove('viewport-mobile');
+          container.classList.add('viewport-desktop');
+          if (btn) btn.innerHTML = '🖥️ View: Desktop';
+          try {
+            const url = new URL(window.location);
+            url.searchParams.set('desktop', '1');
+            window.history.replaceState({}, '', url);
+          } catch (_) {}
+          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Desktop Viewport (100vw).');
+        } else {
+          container.classList.remove('viewport-desktop');
+          container.classList.add('viewport-mobile');
+          if (btn) btn.innerHTML = '📱 View: Mobile';
+          try {
+            const url = new URL(window.location);
+            url.searchParams.delete('desktop');
+            window.history.replaceState({}, '', url);
+          } catch (_) {}
+          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Mobile Viewport (480px).');
+        }
+
+        const canvas = container.querySelector('canvas') || document.querySelector('canvas');
+        if (canvas && canvas.id !== 'qtcanvas') {
+          canvas.id = 'qtcanvas';
+        }
+
+        [10, 100, 300].forEach(delay => {
+          setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
+        });
+      };
+
+      // Check initial viewport mode based on URL (?desktop=1)
+      (function initViewport() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const isDesktop = params.get('desktop') === '1';
+          const container = document.getElementById('qt-container');
+          const btn = document.getElementById('btn-viewport-toggle');
+          if (isDesktop) {
+            if (container) {
+              container.classList.remove('viewport-mobile');
+              container.classList.add('viewport-desktop');
+            }
+            if (btn) btn.innerHTML = '🖥️ View: Desktop';
+            [10, 100, 300].forEach(delay => {
+              setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
+            });
+          }
+        } catch (_) {}
+      })();
+
+      // Attach explicit event listeners to Connect USB button
+      const connectBtn = document.getElementById('btn-webserial-connect');
+      if (connectBtn) {
+        connectBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.toggleWebSerial();
+        });
+      }
+
+      // Attach explicit event listener to Viewport toggle button
+      const vToggleBtn = document.getElementById('btn-viewport-toggle');
+      if (vToggleBtn) {
+        vToggleBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.toggleViewportMode();
+        });
+      }
+
+      // Observer to keep canvas id set to qtcanvas
+      const cObserver = new MutationObserver(function() {
+        const c = document.querySelector('#qt-container canvas') || document.querySelector('canvas');
+        if (c && c.id !== 'qtcanvas') {
+          c.id = 'qtcanvas';
+        }
+      });
+      const cTarget = document.getElementById('qt-container');
+      if (cTarget) {
+        cObserver.observe(cTarget, { childList: true, subtree: true });
+      }
+
+      window.__logToScreen('Diagnostics & Web Serial overlay initialized.');
+    })();
+    </script>
+    """
+
+    if '</body>' in content:
+        content = content.replace('</body>', hud_html + '\n</body>')
+    elif '</BODY>' in content:
+        content = content.replace('</BODY>', hud_html + '\n</BODY>')
+    else:
+        content += hud_html
+
+    # Write to both vesc_tool_7.00.html and index.html
+    out_html = os.path.join(target_dir, "vesc_tool_7.00.html")
+    out_index = os.path.join(target_dir, "index.html")
+    with open(out_html, "w", encoding="utf-8") as f:
+        f.write(content)
+    with open(out_index, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[PATCH SUCCESS] Patched {out_html} and {out_index}")
+    return True
+
+if __name__ == "__main__":
+    target = sys.argv[1] if len(sys.argv) > 1 else "build-wasm"
+    patch_html(target)

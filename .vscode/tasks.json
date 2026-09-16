@@ -4,7 +4,7 @@
     {
       "label": "Build WASM (ninja)",
       "type": "shell",
-      "command": "ninja",
+      "command": "ninja && python ..\\patch_wasm_html.py",
       "options": {
         "cwd": "${workspaceFolder}/build-wasm",
         "env": {

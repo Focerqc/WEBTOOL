@@ -34,6 +34,13 @@ def run_server(port=8080, directory=None):
         else:
             directory = os.getcwd()
 
+    # Automatically ensure HTML template is patched with mobile HUD and WebSerial bridge
+    try:
+        import patch_wasm_html
+        patch_wasm_html.patch_html(directory)
+    except Exception as e:
+        print(f"[WARN] Could not run patch_wasm_html: {e}")
+
     # Ensure proper MIME types
     CrossOriginIsolatedHandler.extensions_map.update({
         ".wasm": "application/wasm",
