@@ -1,4 +1,4 @@
-export default async (req) => {
+export const handler = async (event) => {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -6,15 +6,22 @@ export default async (req) => {
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
 
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
+  // Handle CORS preflight
+  if (event.httpMethod === "OPTIONS") {
+    return {
+      statusCode: 204,
+      headers: corsHeaders,
+      body: "",
+    };
   }
 
-  const url = new URL(req.url);
-  const targetUrl = url.searchParams.get("url");
-
+  const targetUrl = event.queryStringParameters?.url;
   if (!targetUrl) {
-    return new Response("Missing 'url' parameter", { status: 400, headers: corsHeaders });
+    return {
+      statusCode: 400,
+      headers: corsHeaders,
+      body: "Missing 'url' query parameter",
+    };
   }
 
   try {
@@ -23,16 +30,28 @@ export default async (req) => {
       redirect: "follow",
     });
 
-    const headers = new Headers(upstream.headers);
-    Object.entries(corsHeaders).forEach(([k, v]) => headers.set(k, v));
+    const arrayBuffer = await upstream.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers,
-    });
+    // Forward upstream headers and add CORS/CORP
+    const responseHeaders = { ...corsHeaders };
+    const copyHeaders = ["content-type", "content-length", "etag", "last-modified", "content-disposition"];
+    for (const h of copyHeaders) {
+      const val = upstream.headers.get(h);
+      if (val) responseHeaders[h] = val;
+    }
+
+    return {
+      statusCode: upstream.status,
+      headers: responseHeaders,
+      body: buffer.toString("base64"),
+      isBase64Encoded: true,
+    };
   } catch (err) {
-    return new Response(`Proxy error: ${err.message}`, { status: 502, headers: corsHeaders });
+    return {
+      statusCode: 502,
+      headers: corsHeaders,
+      body: `Proxy error: ${err.message}`,
+    };
   }
 };
-
-export const config = { path: "/api/proxy" };
