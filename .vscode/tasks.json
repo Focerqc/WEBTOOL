@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Local Server (server.py)",
+      "type": "shell",
+      "command": "python",
+      "args": ["${workspaceFolder}/server.py", "-p", "8080"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "isBackground": true
+    },
+    {
+      "label": "Start Netlify Dev",
+      "type": "shell",
+      "command": "npx netlify dev",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "isBackground": true
+    }
+  ]
+}

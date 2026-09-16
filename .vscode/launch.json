@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Start Local Server (server.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.py",
+      "args": ["-p", "8080"],
+      "console": "integratedTerminal",
+      "serverReadyAction": {
+        "pattern": "Direct App URL\\s+:\\s+(https?://localhost:\\d+/[^\\s]+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "Start Netlify Dev Server (Functions & App)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npx netlify dev"
+    },
+    {
+      "name": "Launch Chrome to http://localhost:8080",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8080/vesc_tool_7.00.html",
+      "webRoot": "${workspaceFolder}/build-wasm"
+    },
+    {
+      "name": "Launch Edge to http://localhost:8080",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:8080/vesc_tool_7.00.html",
+      "webRoot": "${workspaceFolder}/build-wasm"
+    }
+  ]
+}
