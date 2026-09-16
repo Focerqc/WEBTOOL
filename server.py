@@ -60,7 +60,9 @@ class CrossOriginIsolatedHandler(SimpleHTTPRequestHandler):
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 self.send_response(resp.status)
-                for header in ["Content-Type", "Content-Length", "ETag", "Last-Modified", "Content-Disposition"]:
+                content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+                self.send_header("Content-Type", content_type)
+                for header in ["Content-Length", "ETag", "Last-Modified", "Content-Disposition"]:
                     val = resp.headers.get(header)
                     if val:
                         self.send_header(header, val)
