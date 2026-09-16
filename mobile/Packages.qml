@@ -50,6 +50,13 @@ Item {
         Component.onCompleted: {
             mLoader.setVesc(VescIf)
         }
+        onDownloadProgress: function(bytesReceived, bytesTotal) {
+            if (bytesTotal > 0) {
+                dlDialog.title = "Fetching... " + Number(100.0 * bytesReceived / bytesTotal).toFixed(0) + "%"
+            } else {
+                dlDialog.title = "Fetching... " + Number(bytesReceived / 1000).toFixed(1) + " kB"
+            }
+        }
         onPackageArchiveDownloaded: function(success) {
             reloadArchive()
             enableDialog()
@@ -185,6 +192,19 @@ Item {
                     width: parent.width
 
                     MenuItem {
+                        text: "Fetch package from VESC..."
+                        onTriggered: {
+                            if (!VescIf.isPortConnected()) {
+                                VescIf.emitMessageDialog("Fetch Package", "Not Connected", false, false)
+                                return
+                            }
+                            disableDialog()
+                            dlDialog.title = "Requesting package from VESC..."
+                            mLoader.fetchPackageFromSerial(0)
+                        }
+                    }
+
+                    MenuItem {
                         text: "Install from file..."
                         onTriggered: {
                             if (Utility.requestFilePermission()) {
@@ -238,6 +258,7 @@ Item {
     }
 
     function disableDialog() {
+        dlDialog.title = "Processing..."
         dlDialog.open()
         column.enabled = false
     }

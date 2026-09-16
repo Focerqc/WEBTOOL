@@ -742,18 +742,15 @@ jobs:
           cp -r netlify build-wasm/ 2>/dev/null || true
           cp netlify.toml build-wasm/ 2>/dev/null || true
 
-      - name: Deploy to Netlify
-        uses: nwtgck/actions-netlify@v3.0
+      - name: Setup Node.js for Netlify Deploy
+        uses: actions/setup-node@v4
         with:
-          publish-dir: './build-wasm'
-          functions-dir: './netlify/functions'
-          netlify-config-path: './netlify.toml'
-          production-branch: main
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          deploy-message: "Deploy VESC Tool WASM"
-          enable-pull-request-comment: false
-          enable-commit-comment: true
-          overwrites-pull-request-comment: true
+          node-version: 20
+
+      - name: Deploy to Netlify
+        run: |
+          npx -y netlify-cli deploy --dir=./build-wasm --functions=./netlify/functions --prod --message="Deploy VESC Tool WASM"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+

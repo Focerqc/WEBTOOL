@@ -72,8 +72,13 @@ Item {
         target: mLoader
 
         function onDownloadProgress(bytesReceived, bytesTotal) {
-            dlText = "Downloading..."
-            dlValue = 100.0 * bytesReceived / bytesTotal
+            if (bytesTotal > 0) {
+                dlValue = 100.0 * bytesReceived / bytesTotal
+                dlText = Number(dlValue).toFixed(0) + "% (" + Number(bytesReceived / 1000).toFixed(1) + " / " + Number(bytesTotal / 1000).toFixed(1) + " kB)"
+            } else {
+                dlValue = 0
+                dlText = Number(bytesReceived / 1000).toFixed(1) + " kB"
+            }
         }
     }
 
@@ -535,6 +540,24 @@ Item {
                                     }
                                 }
                             }
+
+                            Button {
+                                text: "Read from VESC"
+                                icon.source: "qrc" + Utility.getThemePath() + "icons/Refresh-96.png"
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Read installed package directly from the connected VESC controller"
+                                enabled: !downloadInProgress
+                                onClicked: {
+                                    if (!VescIf.isPortConnected()) {
+                                        VescIf.emitMessageDialog("Read Package", "Not Connected", false, false)
+                                        return
+                                    }
+                                    downloadInProgress = true
+                                    dlText = "Reading package from VESC..."
+                                    dlValue = 0
+                                    mLoader.fetchPackageFromSerial(0)
+                                }
+                            }
                         }
                     }
 
@@ -817,6 +840,22 @@ Item {
                             VescIf.emitStatusMessage("Downloads Failed", false)
                         }
                     })
+                }
+            }
+
+            Button {
+                text: "Fetch from VESC"
+                icon.source: "qrc" + Utility.getThemePath() + "icons/Download-96.png"
+                enabled: !downloadInProgress
+                onClicked: {
+                    if (!VescIf.isPortConnected()) {
+                        VescIf.emitMessageDialog("Fetch Package", "Not Connected", false, false)
+                        return
+                    }
+                    downloadInProgress = true
+                    dlText = "Fetching package from VESC..."
+                    dlValue = 0
+                    mLoader.fetchPackageFromSerial(0)
                 }
             }
 

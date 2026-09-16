@@ -1,4 +1,59 @@
-exports.handler = async (event) => {
+const http = require("http");
+const https = require("https");
+const { URL } = require("url");
+
+function fetchUrl(targetUrl, maxRedirects = 5) {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects < 0) {
+      return reject(new Error("Too many redirects"));
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(targetUrl);
+    } catch (e) {
+      return reject(new Error("Invalid URL: " + targetUrl));
+    }
+
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const req = client.get(
+      parsedUrl,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "*/*",
+        },
+        timeout: 30000,
+      },
+      (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const redirectUrl = new URL(res.headers.location, parsedUrl).toString();
+          return fetchUrl(redirectUrl, maxRedirects - 1).then(resolve).catch(reject);
+        }
+
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode || 200,
+            headers: res.headers,
+            data: Buffer.concat(chunks),
+          });
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Upstream request timed out"));
+    });
+  });
+}
+
+const handler = async (event, context) => {
+  console.log("[proxy.js] Invoked method:", event ? event.httpMethod : "UNKNOWN");
+
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -6,7 +61,7 @@ exports.handler = async (event) => {
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
 
-  if (event.httpMethod === "OPTIONS") {
+  if (event && event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
       headers: corsHeaders,
@@ -14,20 +69,20 @@ exports.handler = async (event) => {
     };
   }
 
-  // Robustly extract target URL from query parameters or raw query string
-  let targetUrl = event.queryStringParameters && (event.queryStringParameters.url || event.queryStringParameters.URL);
-  if (!targetUrl && event.rawQuery) {
+  let targetUrl = event && event.queryStringParameters && (event.queryStringParameters.url || event.queryStringParameters.URL);
+  if (!targetUrl && event && event.rawQuery) {
     const match = event.rawQuery.match(/(?:^|[?&])url=([^&]+)/i);
     if (match) {
       try {
         targetUrl = decodeURIComponent(match[1]);
-      } catch {
+      } catch (e) {
         targetUrl = match[1];
       }
     }
   }
 
   if (!targetUrl) {
+    console.warn("[proxy.js] Missing 'url' parameter");
     return {
       statusCode: 400,
       headers: { ...corsHeaders, "Content-Type": "text/plain" },
@@ -35,54 +90,42 @@ exports.handler = async (event) => {
     };
   }
 
-  try {
-    const upstream = await fetch(targetUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-      },
-      redirect: "follow",
-    });
+  console.log("[proxy.js] Fetching upstream target:", targetUrl);
 
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => "");
-      console.warn(`[proxy.js] Upstream returned HTTP ${upstream.status} for ${targetUrl}: ${errBody.slice(0, 200)}`);
+  try {
+    const upstream = await fetchUrl(targetUrl);
+    console.log(`[proxy.js] Upstream responded HTTP ${upstream.statusCode}, size: ${upstream.data.length} bytes`);
+
+    if (upstream.statusCode >= 400) {
       return {
-        statusCode: upstream.status,
+        statusCode: upstream.statusCode,
         headers: { ...corsHeaders, "Content-Type": "text/plain" },
-        body: `Upstream error ${upstream.status}: ${errBody.slice(0, 500)}`,
+        body: `Upstream error ${upstream.statusCode}: ${upstream.data.slice(0, 500).toString("utf-8")}`,
         isBase64Encoded: false,
       };
     }
 
-    const arrayBuffer = await upstream.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Prepare response headers
-    // NOTE: DO NOT copy 'content-length'. Netlify's edge layer automatically compresses
-    // or chunks responses. Manually setting Content-Length causes a header-body length
-    // mismatch during CDN compression, resulting in an HTTP 500 Internal Server Error.
-    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+    const contentType = upstream.headers["content-type"] || "application/octet-stream";
     const responseHeaders = {
       ...corsHeaders,
       "Content-Type": contentType,
-      "Cache-Control": upstream.headers.get("cache-control") || "public, max-age=3600",
+      "Cache-Control": upstream.headers["cache-control"] || "public, max-age=3600",
     };
 
     const safeForwardHeaders = ["etag", "last-modified", "content-disposition", "accept-ranges"];
     for (const h of safeForwardHeaders) {
-      const val = upstream.headers.get(h);
+      const val = upstream.headers[h];
       if (val) responseHeaders[h] = val;
     }
 
     return {
       statusCode: 200,
       headers: responseHeaders,
-      body: buffer.toString("base64"),
+      body: upstream.data.toString("base64"),
       isBase64Encoded: true,
     };
   } catch (err) {
-    console.error("[proxy.js] Exception fetching target URL:", targetUrl, err);
+    console.error("[proxy.js] Error fetching upstream URL:", targetUrl, err);
     return {
       statusCode: 502,
       headers: { ...corsHeaders, "Content-Type": "text/plain" },
@@ -90,3 +133,7 @@ exports.handler = async (event) => {
     };
   }
 };
+
+exports.handler = handler;
+module.exports = { handler };
+module.exports.handler = handler;

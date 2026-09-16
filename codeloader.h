@@ -23,6 +23,7 @@
 #include <QObject>
 #include <QDir>
 #include <QQmlEngine>
+#include <QTimer>
 #include "vescinterface.h"
 #include "datatypes.h"
 
@@ -64,6 +65,7 @@ public:
     Q_INVOKABLE static bool loadPackageArchiveResource();
     Q_INVOKABLE QVariantList reloadPackageArchive();
     Q_INVOKABLE bool downloadPackageArchive();
+    Q_INVOKABLE void fetchPackageFromSerial(int pkgId = 0);
 
     Q_INVOKABLE void abortDownloadUpload();
 
@@ -77,12 +79,30 @@ signals:
     void packageArchiveDownloaded(bool success);
     void lispUploadProgress(qint64 bytes, qint64 bytesTotal);
 
+private slots:
+    void onCustomAppDataReceived(QByteArray data);
+    void onQmluiAppRx(int lenQml, int ofsQml, QByteArray data);
+    void onSerialFetchTimeout();
+    void onPortConnectedChanged();
+
 private:
+    void requestNextChunk();
+    void handleChunk(int totalSize, int offset, const QByteArray &chunkData);
+    void finalizeSerialPackage();
+
     VescInterface *mVesc;
     bool mAbortDownloadUpload;
     bool getImportFromLine(QString line, QString &path, QString &tag, bool &isInvalid);
     QQmlEngine *mQmlEngine;
 
+    // Serial Package Fetch State
+    bool m_serialFetchOngoing;
+    QByteArray m_serialPkgBuffer;
+    int m_serialPkgTotalSize;
+    int m_serialPkgExpectedOffset;
+    int m_serialPkgId;
+    int m_serialPkgRetries;
+    QTimer *m_serialFetchTimer;
 };
 
 #endif // CODELOADER_H

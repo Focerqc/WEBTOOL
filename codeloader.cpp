@@ -31,12 +31,23 @@
 #include <QQmlEngine>
 #include <QQmlComponent>
 #include <QQuickItem>
+#include <QDirIterator>
+#include <QStandardPaths>
 
 CodeLoader::CodeLoader(QObject *parent) : QObject(parent)
 {
     mVesc = nullptr;
     mAbortDownloadUpload = false;
     mQmlEngine = nullptr;
+
+    m_serialFetchOngoing = false;
+    m_serialPkgTotalSize = 0;
+    m_serialPkgExpectedOffset = 0;
+    m_serialPkgId = 0;
+    m_serialPkgRetries = 0;
+    m_serialFetchTimer = new QTimer(this);
+    m_serialFetchTimer->setSingleShot(true);
+    connect(m_serialFetchTimer, &QTimer::timeout, this, &CodeLoader::onSerialFetchTimeout);
 
     static bool resourceLoaded = false;
     if (!resourceLoaded) {
@@ -57,7 +68,23 @@ VescInterface *CodeLoader::vesc() const
 
 void CodeLoader::setVesc(VescInterface *vesc)
 {
+    if (mVesc) {
+        if (mVesc->commands()) {
+            disconnect(mVesc->commands(), &Commands::customAppDataReceived, this, &CodeLoader::onCustomAppDataReceived);
+            disconnect(mVesc->commands(), &Commands::qmluiAppRx, this, &CodeLoader::onQmluiAppRx);
+        }
+        disconnect(mVesc, &VescInterface::portConnectedChanged, this, &CodeLoader::onPortConnectedChanged);
+    }
+
     mVesc = vesc;
+
+    if (mVesc) {
+        if (mVesc->commands()) {
+            connect(mVesc->commands(), &Commands::customAppDataReceived, this, &CodeLoader::onCustomAppDataReceived);
+            connect(mVesc->commands(), &Commands::qmluiAppRx, this, &CodeLoader::onQmluiAppRx);
+        }
+        connect(mVesc, &VescInterface::portConnectedChanged, this, &CodeLoader::onPortConnectedChanged);
+    }
 }
 
 bool CodeLoader::lispErase(int size)
@@ -1010,30 +1037,32 @@ bool CodeLoader::loadPackageArchiveResource()
 QVariantList CodeLoader::reloadPackageArchive()
 {
     QVariantList res;
-    QString pkgDir = "://vesc_packages";
 
-    if (QDir(pkgDir).exists()) {
-        QDirIterator it(pkgDir);
+    auto scanDir = [&](const QString &dirPath, bool isRes) {
+        if (!QDir(dirPath).exists()) {
+            return;
+        }
+
+        QDirIterator it(dirPath, QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             QFileInfo fi(it.next());
-
-            QDirIterator it2(fi.absoluteFilePath());
-            while (it2.hasNext()) {
-                QFileInfo fi2(it2.next());
-
-                if (fi2.absoluteFilePath().toLower().endsWith(".vescpkg")) {
-                    QString name = fi2.fileName();
-                    QFile f(fi2.absoluteFilePath());
-                    if (f.open(QIODevice::ReadOnly)) {
-                        auto pkg = unpackVescPackage(f.readAll());
-                        name = pkg.name;
-                        pkg.isLibrary = fi2.absoluteFilePath().startsWith("://vesc_packages/lib_");
+            if (fi.isFile() && fi.fileName().toLower().endsWith(".vescpkg")) {
+                QFile f(fi.absoluteFilePath());
+                if (f.open(QIODevice::ReadOnly)) {
+                    auto pkg = unpackVescPackage(f.readAll());
+                    if (pkg.loadOk) {
+                        pkg.isLibrary = isRes && fi.absoluteFilePath().contains("/lib_");
                         res.append(QVariant::fromValue(pkg));
                     }
                 }
             }
         }
-    }
+    };
+
+    scanDir("://vesc_packages", true);
+
+    QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    scanDir(appDataLoc + "/packages", false);
 
     return res;
 }
@@ -1076,9 +1105,286 @@ bool CodeLoader::downloadPackageArchive()
     return true;
 }
 
+void CodeLoader::fetchPackageFromSerial(int pkgId)
+{
+    if (m_serialFetchOngoing) {
+        qWarning() << "Serial package fetch already in progress.";
+        return;
+    }
+
+    if (!mVesc || !mVesc->isPortConnected()) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Fetch Package"),
+                                     tr("Not connected to VESC."),
+                                     false, false);
+        }
+        emit packageArchiveDownloaded(false);
+        return;
+    }
+
+    mAbortDownloadUpload = false;
+    m_serialFetchOngoing = true;
+    m_serialPkgId = pkgId;
+    m_serialPkgBuffer.clear();
+    m_serialPkgTotalSize = 0;
+    m_serialPkgExpectedOffset = 0;
+    m_serialPkgRetries = 0;
+
+    emit downloadProgress(0, 100);
+
+    requestNextChunk();
+}
+
+void CodeLoader::requestNextChunk()
+{
+    if (!m_serialFetchOngoing || mAbortDownloadUpload || !mVesc || !mVesc->isPortConnected()) {
+        m_serialFetchOngoing = false;
+        m_serialFetchTimer->stop();
+        return;
+    }
+
+    int chunkSize = 384;
+    if (m_serialPkgTotalSize > 0) {
+        int remaining = m_serialPkgTotalSize - m_serialPkgExpectedOffset;
+        if (remaining <= 0) {
+            finalizeSerialPackage();
+            return;
+        }
+        if (remaining < chunkSize) {
+            chunkSize = remaining;
+        }
+    }
+
+    if (mVesc->commands()) {
+        // Primary path: COMM_CUSTOM_APP_DATA request with subcommand 0x02
+        VByteArray vb;
+        vb.vbAppendUint8(0x02); // Subcommand 0x02: FETCH_CHUNK
+        vb.vbAppendInt32(m_serialPkgId);
+        vb.vbAppendInt32(m_serialPkgExpectedOffset);
+        vb.vbAppendInt32(chunkSize);
+        mVesc->commands()->sendCustomAppData(vb);
+
+        // Fallback/parallel for pkgId 0: standard VESC QML UI app get command
+        if (m_serialPkgId == 0) {
+            mVesc->commands()->qmlUiAppGet(chunkSize, m_serialPkgExpectedOffset);
+        }
+    }
+
+    m_serialFetchTimer->start(2500);
+}
+
+void CodeLoader::onCustomAppDataReceived(QByteArray data)
+{
+    if (!m_serialFetchOngoing || data.isEmpty()) {
+        return;
+    }
+
+    // Format 1 (Tagged with subcommand 0x02):
+    // [0x02 (uint8), pkgId (int32), totalSize (int32), offset (int32), chunkData...]
+    if (static_cast<quint8>(data.at(0)) == 0x02 && data.size() >= 13) {
+        VByteArray vb(data);
+        vb.remove(0, 1);
+        int respPkgId = vb.vbPopFrontInt32();
+        int totalSize = vb.vbPopFrontInt32();
+        int offset = vb.vbPopFrontInt32();
+
+        if (respPkgId == m_serialPkgId) {
+            handleChunk(totalSize, offset, vb);
+            return;
+        }
+    }
+
+    // Format 2: [totalSize (int32), offset (int32), chunkData...]
+    if (data.size() >= 8) {
+        VByteArray vb(data);
+        int totalSize = vb.vbPopFrontInt32();
+        int offset = vb.vbPopFrontInt32();
+
+        if (offset == m_serialPkgExpectedOffset && (totalSize == 0 || (totalSize >= offset && totalSize < 50000000))) {
+            handleChunk(totalSize, offset, vb);
+            return;
+        }
+    }
+
+    // Format 3: Raw chunk payload
+    handleChunk(0, m_serialPkgExpectedOffset, data);
+}
+
+void CodeLoader::onQmluiAppRx(int lenQml, int ofsQml, QByteArray data)
+{
+    if (!m_serialFetchOngoing) {
+        return;
+    }
+
+    handleChunk(lenQml, ofsQml, data);
+}
+
+void CodeLoader::handleChunk(int totalSize, int offset, const QByteArray &chunkData)
+{
+    if (!m_serialFetchOngoing) {
+        return;
+    }
+
+    m_serialFetchTimer->stop();
+
+    if (chunkData.isEmpty()) {
+        if (m_serialPkgBuffer.isEmpty()) {
+            m_serialFetchOngoing = false;
+            if (mVesc) {
+                mVesc->emitMessageDialog(tr("Fetch Package"),
+                                         tr("No package found on connected VESC."),
+                                         false, false);
+            }
+            emit packageArchiveDownloaded(false);
+            return;
+        } else {
+            finalizeSerialPackage();
+            return;
+        }
+    }
+
+    if (totalSize > 0 && m_serialPkgTotalSize == 0) {
+        m_serialPkgTotalSize = totalSize;
+    }
+
+    if (offset == m_serialPkgExpectedOffset) {
+        m_serialPkgBuffer.append(chunkData);
+        m_serialPkgExpectedOffset = m_serialPkgBuffer.size();
+        m_serialPkgRetries = 0;
+
+        int reportedTotal = m_serialPkgTotalSize > 0 ? m_serialPkgTotalSize : (m_serialPkgExpectedOffset + chunkData.size());
+        emit downloadProgress(m_serialPkgExpectedOffset, reportedTotal);
+
+        if (m_serialPkgTotalSize > 0 && m_serialPkgBuffer.size() >= m_serialPkgTotalSize) {
+            finalizeSerialPackage();
+        } else {
+            requestNextChunk();
+        }
+    } else if (offset < m_serialPkgExpectedOffset) {
+        // Stale or duplicate chunk; restart watchdog
+        m_serialFetchTimer->start(2500);
+    } else {
+        // Gap detected: re-request from current expected offset
+        requestNextChunk();
+    }
+}
+
+void CodeLoader::finalizeSerialPackage()
+{
+    m_serialFetchOngoing = false;
+    m_serialFetchTimer->stop();
+
+    if (m_serialPkgBuffer.isEmpty()) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Fetch Package"),
+                                     tr("Received empty package from VESC."),
+                                     false, false);
+        }
+        emit packageArchiveDownloaded(false);
+        return;
+    }
+
+    VescPackage pkg = unpackVescPackage(m_serialPkgBuffer);
+
+    // Fallback: If not formatted as a full VESC package, check if it's raw QML or compressed QML
+    if (!pkg.loadOk) {
+        QByteArray uncompressed = qUncompress(m_serialPkgBuffer);
+        if (uncompressed.isEmpty()) {
+            uncompressed = m_serialPkgBuffer;
+        }
+
+        if (uncompressed.contains("import QtQuick") || uncompressed.contains("import ")) {
+            pkg.name = "VESC Serial App";
+            pkg.description = "Extracted directly from connected VESC controller.";
+            pkg.qmlFile = QString::fromUtf8(uncompressed);
+            pkg.loadOk = true;
+            m_serialPkgBuffer = packVescPackage(pkg);
+        }
+    }
+
+    if (!pkg.loadOk) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Fetch Package"),
+                                     tr("Failed to parse package archive received from VESC."),
+                                     false, false);
+        }
+        emit packageArchiveDownloaded(false);
+        return;
+    }
+
+    // Save package into persistent packages folder
+    QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString pkgDir = appDataLoc + "/packages";
+    if (!QDir(pkgDir).exists()) {
+        QDir().mkpath(pkgDir);
+    }
+
+    QString safeName = pkg.name;
+    safeName.replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_");
+    if (safeName.isEmpty()) {
+        safeName = "serial_package";
+    }
+
+    QString pkgPath = pkgDir + "/" + safeName + ".vescpkg";
+    QFile f(pkgPath);
+    if (f.open(QIODevice::WriteOnly)) {
+        f.write(m_serialPkgBuffer);
+        f.close();
+        syncFsToIndexedDb();
+    }
+
+    if (mVesc) {
+        mVesc->emitStatusMessage(tr("Successfully fetched package '%1' from VESC").arg(pkg.name), true);
+    }
+
+    emit packageArchiveDownloaded(true);
+}
+
+void CodeLoader::onSerialFetchTimeout()
+{
+    if (!m_serialFetchOngoing) {
+        return;
+    }
+
+    if (m_serialPkgRetries < 3) {
+        m_serialPkgRetries++;
+        qWarning() << "Serial package fetch timeout, retry" << m_serialPkgRetries;
+        requestNextChunk();
+    } else {
+        if (m_serialPkgTotalSize == 0 && m_serialPkgBuffer.size() > 0) {
+            finalizeSerialPackage();
+        } else {
+            m_serialFetchOngoing = false;
+            m_serialPkgBuffer.clear();
+            if (mVesc) {
+                mVesc->emitMessageDialog(tr("Fetch Package"),
+                                         tr("Serial package fetch timed out. VESC did not respond."),
+                                         false, false);
+            }
+            emit packageArchiveDownloaded(false);
+        }
+    }
+}
+
+void CodeLoader::onPortConnectedChanged()
+{
+    if (m_serialFetchOngoing && (!mVesc || !mVesc->isPortConnected())) {
+        m_serialFetchOngoing = false;
+        m_serialFetchTimer->stop();
+        m_serialPkgBuffer.clear();
+        emit packageArchiveDownloaded(false);
+    }
+}
+
 void CodeLoader::abortDownloadUpload()
 {
     mAbortDownloadUpload = true;
+    if (m_serialFetchOngoing) {
+        m_serialFetchOngoing = false;
+        m_serialFetchTimer->stop();
+        m_serialPkgBuffer.clear();
+        emit packageArchiveDownloaded(false);
+    }
 }
 
 bool CodeLoader::createPackageFromDescription(QString path, VescPackage *pkgRes, bool reduceLisp)
