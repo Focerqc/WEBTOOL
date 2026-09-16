@@ -4977,6 +4977,20 @@ QString VescInterface::adaptQmlToQt6(const QString &qml)
     static const QRegularExpression reLabs(R"(\bimport\s+(Qt\.labs\.\w+)\s+\d+(?:\.\d+)?(\s+as\s+\w+)?)");
     res.replace(reLabs, R"(import \1\2)");
 
+    // 7. FileDialog Qt 5 vs Qt 6 property differences:
+    // In Qt 6 FileDialog, "selectExisting" was removed and replaced by "fileMode".
+    static const QRegularExpression reSelectExistingTrue(R"(\bselectExisting\s*:\s*true\b)");
+    res.replace(reSelectExistingTrue, R"(fileMode: FileDialog.OpenFile)");
+
+    static const QRegularExpression reSelectExistingFalse(R"(\bselectExisting\s*:\s*false\b)");
+    res.replace(reSelectExistingFalse, R"(fileMode: FileDialog.SaveFile)");
+
+    static const QRegularExpression reSelectExistingGeneric(R"(\bselectExisting\s*:\s*\w+)");
+    res.replace(reSelectExistingGeneric, R"(// selectExisting removed in Qt6)");
+
+    static const QRegularExpression reSidebarVisible(R"(\bsidebarVisible\s*:\s*(?:true|false|\w+))");
+    res.replace(reSidebarVisible, R"(// sidebarVisible removed in Qt6)");
+
     if (res != qml) {
         qDebug() << "[QML Adapter] Adapted legacy Qt5 QML imports for Qt6 compatibility.";
     }

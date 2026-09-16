@@ -437,106 +437,25 @@ def patch_html(build_dir="build-wasm"):
         try {
           window.__logToScreen('[SERIAL] Requesting USB serial device via browser dialog...');
           serialPort = await navigator.serial.requestPort();
-          if (serialPort && (serialPort.readable || serialPort.writable)) {
-            console.log("[SERIAL] Port is already open, skipping open call.");
-            window.__logToScreen('[SERIAL] Port is already open, skipping open call.');
-          } else {
-            window.__logToScreen('[SERIAL] Opening port at 115200 baud (ESP32 VESC Express standard)...');
-            await serialPort.open({ baudRate: 115200 });
+          if (serialPort) {
+            if (window._webSerialBridge) {
+              var portId = window._webSerialBridge.findOrAddPort(serialPort);
+              window.__logToScreen('[SERIAL] Port granted (ID: ' + portId + '). Connecting VESC Interface...', '#4ade80');
+            }
+            isSerialConnected = true;
+            updateSerialHud();
+            // Notify WASM module (VescInterface) to connect through QSerialPort / webserialbridge
+            notifyWasmConnection(1);
           }
-
-          isSerialConnected = true;
-          if (serialPort.writable) {
-            serialWriter = serialPort.writable.getWriter();
-          }
-
-          updateSerialHud();
-          window.__logToScreen('[SERIAL] Connected successfully at 115200 baud.', '#4ade80');
-
-          // Notify WASM module of connection
-          notifyWasmConnection(1);
-
-          // Start reading loop
-          readSerialLoop();
         } catch (err) {
           window.__logToScreen('[SERIAL ERROR] Connection failed: ' + (err.message || err), '#f87171');
           await disconnectWebSerial();
         }
       }
 
-      async function readSerialLoop() {
-        while (serialPort && serialPort.readable && isSerialConnected) {
-          try {
-            serialReader = serialPort.readable.getReader();
-            while (isSerialConnected) {
-              const { value, done } = await serialReader.read();
-              if (done) break;
-              if (value && value.length > 0) {
-                bytesRx += value.length;
-                updateSerialHud();
-
-                const hexStr = bytesToHex(value);
-                window.__logToScreen(`[SERIAL RX] (${value.length} bytes): ${hexStr}`, '#a5f3fc');
-
-                // Feed raw bytes into wasm_serial_rx via EM_JS bridge
-                if (window.__wasm_serial_feed_rx) {
-                  window.__wasm_serial_feed_rx(value);
-                } else if (window.Module && typeof window.Module._wasm_serial_rx === 'function') {
-                  const ptr = window.Module._malloc(value.length);
-                  if (ptr % 8 !== 0) {
-                    console.error('[SERIAL ERROR] Unaligned pointer returned by Module._malloc:', ptr, 'len:', value.length);
-                    window.__logToScreen(`[SERIAL ERROR] Unaligned pointer returned by Module._malloc: ${ptr} (alignment: ${ptr % 8})`, '#f87171');
-                  }
-                  window.Module.HEAPU8.set(value, ptr);
-                  window.Module._wasm_serial_rx(ptr, value.length);
-                  window.Module._free(ptr);
-                }
-              }
-            }
-          } catch (err) {
-            if (isSerialConnected) {
-              window.__logToScreen('[SERIAL RX ERROR] ' + (err.message || err), '#f87171');
-            }
-            break;
-          } finally {
-            if (serialReader) {
-              try { serialReader.releaseLock(); } catch (_) {}
-              serialReader = null;
-            }
-          }
-        }
-
-        if (isSerialConnected) {
-          disconnectWebSerial();
-        }
-      }
-
       async function disconnectWebSerial() {
         isSerialConnected = false;
         window.__logToScreen('[SERIAL] Disconnecting serial port...');
-
-        try {
-          if (serialReader) {
-            await serialReader.cancel();
-            serialReader.releaseLock();
-            serialReader = null;
-          }
-        } catch (_) {}
-
-        try {
-          if (serialWriter) {
-            serialWriter.releaseLock();
-            serialWriter = null;
-          }
-        } catch (_) {}
-
-        try {
-          if (serialPort) {
-            await serialPort.close();
-            serialPort = null;
-          }
-        } catch (_) {}
-
         notifyWasmConnection(0);
         updateSerialHud();
         window.__logToScreen('[SERIAL] Disconnected.');

@@ -179,6 +179,12 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
 
     p.port.open(options).then(function() {
         console.log("WebSerial port", portId, "opened successfully at", baudRate, "baud.");
+        if (typeof window !== 'undefined' && window.__logToScreen) {
+            window.__logToScreen('[SERIAL] Connected successfully at ' + baudRate + ' baud.', '#4ade80');
+        }
+        if (typeof isSerialConnected !== 'undefined') isSerialConnected = true;
+        if (typeof updateSerialHud === 'function') updateSerialHud();
+
         if (p.port.writable) {
             p.writer = p.port.writable.getWriter();
         }
@@ -194,6 +200,13 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
                         if (done) break;
                         if (value && value.length > 0) {
                             p.rxQueue.push(value);
+                            if (typeof bytesRx !== 'undefined') bytesRx += value.length;
+                            if (typeof updateSerialHud === 'function') updateSerialHud();
+                            if (typeof window !== 'undefined' && window.__logToScreen && value.length <= 256) {
+                                var hexStr = Array.from(value).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+                                window.__logToScreen('[SERIAL RX] (' + value.length + ' bytes): ' + hexStr, '#a5f3fc');
+                            }
+
                             if (p.rxCallback) {
                                 try {
                                     if (typeof wasmTable !== 'undefined') {
@@ -222,6 +235,11 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
     }).catch(function(err) {
         console.error("Failed to open WebSerial port:", err);
         p.isOpen = false;
+        if (typeof window !== 'undefined' && window.__logToScreen) {
+            window.__logToScreen('[SERIAL ERROR] Failed to open port: ' + (err.message || err), '#f87171');
+        }
+        if (typeof isSerialConnected !== 'undefined') isSerialConnected = false;
+        if (typeof updateSerialHud === 'function') updateSerialHud();
         if (p.errCallback) {
             try {
                 if (typeof wasmTable !== 'undefined') {
@@ -243,6 +261,12 @@ EM_JS(int, js_webserial_close, (int portId), {
 
     var p = bridge.ports[portId];
     p.isOpen = false;
+
+    if (typeof isSerialConnected !== 'undefined') isSerialConnected = false;
+    if (typeof updateSerialHud === 'function') updateSerialHud();
+    if (typeof window !== 'undefined' && window.__logToScreen) {
+        window.__logToScreen('[SERIAL] Disconnected.');
+    }
 
     (async function() {
         try {
@@ -283,7 +307,14 @@ EM_JS(int, js_webserial_write, (int portId, const uint8_t *data, int len), {
     if (!p.isOpen || !p.writer) return -1;
 
     try {
-        var chunk = HEAPU8.slice(data, data + len);
+        var heap = (typeof HEAPU8 !== 'undefined' && HEAPU8.buffer && !HEAPU8.buffer.detached) ? HEAPU8 : new Uint8Array(Module.HEAPU8.buffer);
+        var chunk = heap.slice(data, data + len);
+        if (typeof bytesTx !== 'undefined') bytesTx += len;
+        if (typeof updateSerialHud === 'function') updateSerialHud();
+        if (typeof window !== 'undefined' && window.__logToScreen && len <= 256) {
+            var hexStr = Array.from(chunk).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+            window.__logToScreen('[SERIAL TX] (' + len + ' bytes): ' + hexStr, '#fef08a');
+        }
         p.writer.write(chunk).catch(function(err) {
             console.error("Async write error:", err);
         });
@@ -302,18 +333,19 @@ EM_JS(int, js_webserial_read, (int portId, uint8_t *buf, int maxLen), {
     var p = bridge.ports[portId];
     if (!p.rxQueue || p.rxQueue.length === 0 || maxLen <= 0) return 0;
 
+    var heap = (typeof HEAPU8 !== 'undefined' && HEAPU8.buffer && !HEAPU8.buffer.detached) ? HEAPU8 : new Uint8Array(Module.HEAPU8.buffer);
     var bytesRead = 0;
     while (p.rxQueue.length > 0 && bytesRead < maxLen) {
         var firstChunk = p.rxQueue[0];
         var needed = maxLen - bytesRead;
         if (firstChunk.length <= needed) {
-            HEAPU8.set(firstChunk, buf + bytesRead);
+            heap.set(firstChunk, buf + bytesRead);
             bytesRead += firstChunk.length;
             p.rxQueue.shift();
         } else {
             var slice = firstChunk.subarray(0, needed);
             var remainder = firstChunk.subarray(needed);
-            HEAPU8.set(slice, buf + bytesRead);
+            heap.set(slice, buf + bytesRead);
             bytesRead += needed;
             p.rxQueue[0] = remainder;
             break;
