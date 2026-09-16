@@ -327,9 +327,9 @@ jobs:
                       bytesRx += value.length;
                       updateSerialHud();
 
-                      // Feed raw bytes into wasm_serial_rx
-                      if (window.Module && typeof window.Module.ccall === 'function') {
-                        window.Module.ccall('wasm_serial_rx', null, ['array', 'number'], [value, value.length]);
+                      // Feed raw bytes into wasm_serial_rx via EM_JS bridge
+                      if (window.__wasm_serial_feed_rx) {
+                        window.__wasm_serial_feed_rx(value);
                       } else if (window.Module && typeof window.Module._wasm_serial_rx === 'function') {
                         const ptr = window.Module._malloc(value.length);
                         window.Module.HEAPU8.set(value, ptr);
@@ -388,12 +388,10 @@ jobs:
             }
 
             function notifyWasmConnection(connected) {
-              if (window.Module && typeof window.Module.ccall === 'function') {
-                try {
-                  window.Module.ccall('wasm_serial_set_connected', null, ['number'], [connected]);
-                } catch (e) {
-                  window.__logToScreen('[SERIAL WARN] wasm_serial_set_connected failed: ' + e, '#facc15');
-                }
+              if (typeof window.__wasm_serial_set_connected_js === 'function') {
+                window.__wasm_serial_set_connected_js(connected ? true : false);
+              } else if (window.Module && typeof window.Module._wasm_serial_set_connected === 'function') {
+                window.Module._wasm_serial_set_connected(connected ? 1 : 0);
               }
             }
 

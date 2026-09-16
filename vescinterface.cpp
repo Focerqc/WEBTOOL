@@ -63,6 +63,9 @@ VescInterface *VescInterface::sInstance = nullptr;
 VescInterface::VescInterface(QObject *parent) : QObject(parent)
 {
     sInstance = this;
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    wasm_serial_bridge_init();
+#endif
     mMcConfig = new ConfigParams(this);
     mAppConfig = new ConfigParams(this);
     mInfoConfig = new ConfigParams(this);

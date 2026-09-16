@@ -16,6 +16,11 @@ extern "C" {
 #endif
 
 /**
+ * @brief Initialize JavaScript global bindings for Web Serial bridge.
+ */
+void wasm_serial_bridge_init(void);
+
+/**
  * @brief Forward incoming serial bytes from JavaScript into VESC Tool's packet pipeline.
  * @param data Pointer to incoming byte buffer.
  * @param len Number of bytes.

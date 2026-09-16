@@ -1080,15 +1080,6 @@ if(WIN32)
     )
 endif()
 
-# ---------------------------------------------------------------------------
-# Emscripten / WebAssembly specific
-# ---------------------------------------------------------------------------
-if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
-    target_link_options(${APP_TARGET} PRIVATE
-        "SHELL:-s EXPORTED_FUNCTIONS=['_main','_wasm_serial_rx','_wasm_serial_set_connected']"
-        "SHELL:-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','setValue','getValue']"
-    )
-endif()
 
 # ---------------------------------------------------------------------------
 # Install rules (basic)
