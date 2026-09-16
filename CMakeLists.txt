@@ -107,6 +107,15 @@ endif()
 if(HAS_POS)
     list(APPEND QT_COMPONENTS Positioning PositioningQuick Location)
 endif()
+
+if(NOT Qt6_DIR AND WIN32)
+    if(EXISTS "C:/Qt/6.11.0/mingw_64/lib/cmake/Qt6")
+        list(PREPEND CMAKE_PREFIX_PATH "C:/Qt/6.11.0/mingw_64")
+    elseif(EXISTS "C:/Qt/6.11.0/wasm_multithread/lib/cmake/Qt6")
+        list(PREPEND CMAKE_PREFIX_PATH "C:/Qt/6.11.0/wasm_multithread")
+    endif()
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS ${QT_COMPONENTS})
 # We need GuiPrivate for some internals
 find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)

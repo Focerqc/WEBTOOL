@@ -66,33 +66,27 @@ jobs:
 
           # 1. Lock Viewport to Centered Smartphone Frame
           phone_css = """<style>
-          /* Make html/body cover viewport with dark neutral letterboxing */
-          html, body {
-            padding: 0;
+          body {
             margin: 0;
-            overflow: hidden;
-            height: 100%;
-            background-color: #151515;
+            background-color: #151515 !important;
             display: flex;
             justify-content: center;
             align-items: center;
+            height: 100vh;
+            overflow: hidden;
           }
-          /* Constrain screen container to centered portrait smartphone aspect */
           #screen {
             width: 100% !important;
             max-width: 460px !important;
             height: 100vh !important;
-            margin: 0 auto !important;
             position: relative !important;
             overflow: hidden !important;
             box-shadow: 0 0 30px rgba(0,0,0,0.8);
             background-color: #202020;
           }
-          /* Allow Qt's shadow container and canvas to fill #screen naturally without overriding positioning */
-          #qt-shadow-container, .qt-screen, canvas {
+          #qt-shadow-container {
             width: 100% !important;
             height: 100% !important;
-            margin: 0 !important;
           }
           </style>"""
           content = re.sub(r'<style>.*?</style>', phone_css, content, flags=re.DOTALL)

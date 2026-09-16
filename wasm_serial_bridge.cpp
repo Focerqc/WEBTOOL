@@ -9,20 +9,43 @@
 #include <emscripten.h>
 #include <emscripten/em_js.h>
 
+EM_JS(void, js_wasm_serial_tx, (const uint8_t* ptr, int len), {
+    if (typeof window !== 'undefined' && window.wasm_serial_tx && ptr && len > 0) {
+        const bytes = new Uint8Array(HEAPU8.buffer, ptr, len);
+        window.wasm_serial_tx(bytes);
+    }
+});
+
+EM_JS(void, js_wasm_serial_set_connected, (int connected), {
+    if (typeof window !== 'undefined' && window.__wasm_serial_on_state_change) {
+        window.__wasm_serial_on_state_change(!!connected);
+    }
+});
+
 EM_JS(void, register_wasm_serial_bridge_js, (), {
     var target = (typeof window !== 'undefined') ? window : ((typeof globalThis !== 'undefined') ? globalThis : self);
 
     target.__wasm_serial_feed_rx = function(uint8Array) {
         if (!uint8Array || !uint8Array.length) return;
         var len = uint8Array.length;
-        var ptr = _malloc(len);
+        var ptr = (typeof Module !== 'undefined' && Module._malloc) ? Module._malloc(len) : _malloc(len);
         HEAPU8.set(uint8Array, ptr);
-        _wasm_serial_rx(ptr, len);
-        _free(ptr);
+        if (typeof Module !== 'undefined' && Module._wasm_serial_rx) {
+            Module._wasm_serial_rx(ptr, len);
+        } else {
+            _wasm_serial_rx(ptr, len);
+        }
+        if (typeof Module !== 'undefined' && Module._free) {
+            Module._free(ptr);
+        } else {
+            _free(ptr);
+        }
     };
 
     target.__wasm_serial_set_connected_js = function(connected) {
-        if (typeof _wasm_serial_set_connected === 'function') {
+        if (typeof Module !== 'undefined' && typeof Module._wasm_serial_set_connected === 'function') {
+            Module._wasm_serial_set_connected(connected ? 1 : 0);
+        } else if (typeof _wasm_serial_set_connected === 'function') {
             _wasm_serial_set_connected(connected ? 1 : 0);
         }
     };
@@ -39,35 +62,6 @@ extern "C" {
 void wasm_serial_bridge_init(void) {
 #if defined(__EMSCRIPTEN__)
     register_wasm_serial_bridge_js();
-
-    // Ensure bridge functions are also registered on the browser window thread in multithreaded WASM
-    MAIN_THREAD_ASYNC_EM_ASM({
-        if (typeof window !== 'undefined') {
-            window.__wasm_serial_feed_rx = function(uint8Array) {
-                if (!uint8Array || !uint8Array.length) return;
-                var len = uint8Array.length;
-                if (typeof Module !== 'undefined' && typeof Module._malloc === 'function' && typeof Module._wasm_serial_rx === 'function') {
-                    var ptr = Module._malloc(len);
-                    Module.HEAPU8.set(uint8Array, ptr);
-                    Module._wasm_serial_rx(ptr, len);
-                    Module._free(ptr);
-                } else if (typeof _malloc === 'function' && typeof _wasm_serial_rx === 'function') {
-                    var ptr = _malloc(len);
-                    HEAPU8.set(uint8Array, ptr);
-                    _wasm_serial_rx(ptr, len);
-                    _free(ptr);
-                }
-            };
-
-            window.__wasm_serial_set_connected_js = function(connected) {
-                if (typeof Module !== 'undefined' && typeof Module._wasm_serial_set_connected === 'function') {
-                    Module._wasm_serial_set_connected(connected ? 1 : 0);
-                } else if (typeof _wasm_serial_set_connected === 'function') {
-                    _wasm_serial_set_connected(connected ? 1 : 0);
-                }
-            };
-        }
-    });
 #endif
 }
 
@@ -112,6 +106,9 @@ WASM_EXPORT void wasm_serial_set_connected(int connected) {
         } else {
             vi->disconnectPort();
         }
+#if defined(__EMSCRIPTEN__)
+        js_wasm_serial_set_connected(connected);
+#endif
     }, Qt::QueuedConnection);
 }
 
@@ -121,20 +118,7 @@ void wasm_serial_tx(const uint8_t* data, int len) {
     }
 
 #if defined(__EMSCRIPTEN__)
-    // In wasm_multithread, Qt runs on a worker pthread.
-    // MAIN_THREAD_ASYNC_EM_ASM dispatches to the browser's main UI thread where window.wasm_serial_tx is defined.
-    MAIN_THREAD_ASYNC_EM_ASM({
-        var ptr = $0;
-        var len = $1;
-        if (typeof window !== 'undefined' && typeof window.wasm_serial_tx === 'function') {
-            var chunk = HEAPU8.slice(ptr, ptr + len);
-            try {
-                window.wasm_serial_tx(chunk);
-            } catch (err) {
-                console.error("wasm_serial_tx dispatch error:", err);
-            }
-        }
-    }, data, len);
+    js_wasm_serial_tx(data, len);
 #else
     (void)data;
     (void)len;
