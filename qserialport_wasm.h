@@ -139,6 +139,9 @@ public:
 
     bool flush();
 
+    bool waitForReadyRead(int msecs = 30000) override;
+    bool waitForBytesWritten(int msecs = 30000) override;
+
     bool setBaudRate(qint32 baudRate, Directions directions = AllDirections);
     qint32 baudRate(Directions directions = AllDirections) const;
 

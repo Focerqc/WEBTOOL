@@ -315,6 +315,18 @@ bool QSerialPort::flush()
     return false;
 }
 
+bool QSerialPort::waitForReadyRead(int msecs)
+{
+    Q_UNUSED(msecs);
+    return (bytesAvailable() > 0);
+}
+
+bool QSerialPort::waitForBytesWritten(int msecs)
+{
+    Q_UNUSED(msecs);
+    return true;
+}
+
 bool QSerialPort::setBaudRate(qint32 baudRate, Directions directions)
 {
     Q_UNUSED(directions);

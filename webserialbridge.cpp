@@ -153,6 +153,12 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
     var p = bridge.ports[portId];
     if (p.isOpen) return 1;
 
+    if (p.port && (p.port.readable || p.port.writable)) {
+        console.log("[SERIAL] Port is already open, skipping open call.");
+        p.isOpen = true;
+        return 1;
+    }
+
     var parityStr = "none";
     if (parity === 1) parityStr = "odd";
     else if (parity === 2) parityStr = "even";

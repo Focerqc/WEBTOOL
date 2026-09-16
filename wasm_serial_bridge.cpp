@@ -103,7 +103,9 @@ WASM_EXPORT void wasm_serial_set_connected(int connected) {
 
     QMetaObject::invokeMethod(vi, [vi, connected]() {
         if (connected) {
-            vi->connectSerial("WebSerial", 115200);
+            if (!vi->isPortConnected()) {
+                vi->connectSerial("WebSerial", 115200);
+            }
         } else {
             vi->disconnectPort();
         }

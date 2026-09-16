@@ -96,8 +96,30 @@ jobs:
           # 2. Pass stdout and stderr hooks into the existing qtLoad call and capture instance
           def patch_qtload(m):
               return m.group(0) + """
-                      stdout: function(text) { window.__logToScreen ? window.__logToScreen('[STDOUT] ' + text) : console.log(text); },
-                      stderr: function(text) { window.__logToScreen ? window.__logToScreen('[STDERR] ' + text, 'red') : console.error(text); },"""
+                      stdout: function(val) {
+                          if (typeof val === 'number') {
+                              if (val === 10) {
+                                  if (window.__logToScreen) window.__logToScreen('[STDOUT] ' + (window.__stdoutBuf || ''));
+                                  window.__stdoutBuf = '';
+                              } else {
+                                  window.__stdoutBuf = (window.__stdoutBuf || '') + String.fromCharCode(val);
+                              }
+                          } else if (typeof val === 'string') {
+                              if (window.__logToScreen) window.__logToScreen('[STDOUT] ' + val);
+                          }
+                      },
+                      stderr: function(val) {
+                          if (typeof val === 'number') {
+                              if (val === 10) {
+                                  if (window.__logToScreen) window.__logToScreen('[STDERR] ' + (window.__stderrBuf || ''), 'red');
+                                  window.__stderrBuf = '';
+                              } else {
+                                  window.__stderrBuf = (window.__stderrBuf || '') + String.fromCharCode(val);
+                              }
+                          } else if (typeof val === 'string') {
+                              if (window.__logToScreen) window.__logToScreen('[STDERR] ' + val, 'red');
+                          }
+                      },"""
 
           content, count = re.subn(r'qtLoad\s*\(\s*\{', patch_qtload, content, count=1)
           print(f"Patched qtLoad hooks in index.html (matches: {count})")
@@ -251,17 +273,58 @@ jobs:
 
             // Module hooks
             window.Module = window.Module || {};
+            var stdoutBuffer = '';
+            var stderrBuffer = '';
+
+            window.Module.stdout = function(charCode) {
+              if (typeof charCode === 'number') {
+                if (charCode === 10) {
+                  if (!isFilteredMessage(stdoutBuffer)) {
+                    window.__logToScreen('[STDOUT] ' + stdoutBuffer);
+                  }
+                  stdoutBuffer = '';
+                } else {
+                  stdoutBuffer += String.fromCharCode(charCode);
+                }
+              } else if (typeof charCode === 'string') {
+                if (!isFilteredMessage(charCode)) {
+                  window.__logToScreen('[STDOUT] ' + charCode);
+                }
+              }
+            };
+
+            window.Module.stderr = function(charCode) {
+              if (typeof charCode === 'number') {
+                if (charCode === 10) {
+                  if (!isFilteredMessage(stderrBuffer)) {
+                    window.__logToScreen('[STDERR] ' + stderrBuffer, 'red');
+                  }
+                  stderrBuffer = '';
+                } else {
+                  stderrBuffer += String.fromCharCode(charCode);
+                }
+              } else if (typeof charCode === 'string') {
+                if (!isFilteredMessage(charCode)) {
+                  window.__logToScreen('[STDERR] ' + charCode, 'red');
+                }
+              }
+            };
+
             const origPrint = window.Module.print || console.log;
             const origPrintErr = window.Module.printErr || console.error;
             window.Module.print = function(text) {
-              if (!isFilteredMessage(text)) {
-                window.__logToScreen('[STDOUT] ' + text);
+              if (typeof text === 'string') {
+                if (!isFilteredMessage(text)) {
+                  window.__logToScreen('[STDOUT] ' + text);
+                }
               }
               origPrint(text);
             };
             window.Module.printErr = function(text) {
-              if (!isFilteredMessage(text)) {
-                window.__logToScreen('[STDERR] ' + text, 'red');
+              if (typeof text === 'string') {
+                if (!isFilteredMessage(text)) {
+                  window.__logToScreen('[STDERR] ' + text, 'red');
+                }
               }
               origPrintErr(text);
             };
@@ -334,8 +397,13 @@ jobs:
               try {
                 window.__logToScreen('[SERIAL] Requesting USB serial device...');
                 serialPort = await navigator.serial.requestPort({ filters: [] });
-                window.__logToScreen('[SERIAL] Opening port at 115200 baud (ESP32 VESC Express standard)...');
-                await serialPort.open({ baudRate: 115200 });
+                if (serialPort && (serialPort.readable || serialPort.writable)) {
+                  console.log("[SERIAL] Port is already open, skipping open call.");
+                  window.__logToScreen('[SERIAL] Port is already open, skipping open call.');
+                } else {
+                  window.__logToScreen('[SERIAL] Opening port at 115200 baud (ESP32 VESC Express standard)...');
+                  await serialPort.open({ baudRate: 115200 });
+                }
 
                 isSerialConnected = true;
                 if (serialPort.writable) {
