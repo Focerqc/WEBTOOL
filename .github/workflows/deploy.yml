@@ -65,35 +65,57 @@ jobs:
           with open('build-wasm/index.html', 'r', encoding='utf-8') as f:
               content = f.read()
 
-          # 1. Lock Viewport to Centered Smartphone Frame
-          phone_css = """<style>
+          # 1. Viewport Styling for Mobile (480px) and Desktop (100vw)
+          viewport_css = """<style>
           body {
             margin: 0;
-            background-color: #151515 !important;
+            padding: 0;
+            overflow-x: hidden;
+            background-color: #121212 !important;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            justify-content: flex-start;
             align-items: center;
             height: 100vh;
-            overflow: hidden;
+            overflow-y: hidden;
           }
-          #screen {
-            width: 100% !important;
-            max-width: 460px !important;
-            height: calc(100vh - 34px) !important;
-            position: relative !important;
-            overflow: hidden !important;
+          #qt-container.viewport-mobile {
+            max-width: 480px;
+            width: 100%;
+            height: calc(100vh - 42px);
+            margin: 0 auto;
+            position: relative;
+            overflow: hidden;
             box-shadow: 0 0 30px rgba(0,0,0,0.8);
             background-color: #202020;
-            margin-bottom: 34px !important;
+          }
+          #qt-container.viewport-desktop {
+            max-width: 100vw !important;
+            width: 100vw !important;
+            height: calc(100vh - 42px) !important;
+            margin: 0 !important;
+            position: relative;
+            box-shadow: none;
+            background-color: #202020;
+          }
+          #qtcanvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+          }
+          #qt-shadow-container, .qt-screen, #qt-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
           }
           #qtspinner {
             position: absolute !important;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            margin: 0 !important;
             pointer-events: none !important;
             z-index: 50 !important;
-          }
-          #qt-shadow-container {
-            width: 100% !important;
-            height: 100% !important;
           }
           @media (max-width: 960px) {
             #vesc-diagnostics-logs-panel {
@@ -104,8 +126,23 @@ jobs:
             }
           }
           </style>"""
-          content = re.sub(r'<style>.*?</style>', phone_css, content, flags=re.DOTALL)
-          print("Patched viewport CSS to 460px centered mobile frame")
+          content = re.sub(r'<style>.*?</style>', viewport_css, content, flags=re.DOTALL)
+          print("Patched viewport CSS for Mobile & Desktop modes")
+
+          # Replace #screen container with #qt-container (defaulting to viewport-mobile)
+          content = content.replace(
+              '<div id="screen"></div>',
+              '<div id="qt-container" class="viewport-mobile"></div>'
+          )
+          content = content.replace(
+              "const screen = document.querySelector('#screen');",
+              "const screen = document.querySelector('#qt-container');"
+          )
+          content = content.replace(
+              'onLoaded: () => showUi(screen),',
+              'onLoaded: () => { showUi(screen); const c = document.querySelector("#qt-container canvas") || document.querySelector("canvas"); if (c) c.id = "qtcanvas"; [10, 100, 300].forEach(delay => setTimeout(() => window.dispatchEvent(new Event("resize")), delay)); },'
+          )
+          print("Updated container elements to #qt-container and hooked onLoaded")
 
           # 2. Pass stdout and stderr hooks into the existing qtLoad call and capture instance
           def patch_qtload(m):
@@ -147,26 +184,27 @@ jobs:
           # 3. Inject overlay, Web Serial controls, and bridge scripts right before </body>
           hud_html = """
           <!-- VESC Tool WASM Diagnostics Bottom Bar -->
-          <div id="vesc-diagnostics-bar" style="position:fixed;bottom:0;left:0;right:0;height:34px;background:rgba(15,23,42,0.98);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;z-index:99999;border-top:1px solid #0284c7;display:flex;align-items:center;justify-content:space-between;padding:0 10px;box-shadow:0 -2px 10px rgba(0,0,0,0.5);user-select:none;pointer-events:auto !important;">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:nowrap;overflow:visible;height:100%;">
+          <div id="vesc-diagnostics-bar" style="z-index:100000;position:relative;pointer-events:auto;width:100%;height:42px;flex-shrink:0;background:rgba(15,23,42,0.98);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;border-top:1px solid #0284c7;display:flex;align-items:center;justify-content:space-between;padding:0 10px;box-sizing:border-box;box-shadow:0 -2px 10px rgba(0,0,0,0.5);user-select:none;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:visible;height:100%;position:relative;z-index:100000;pointer-events:auto;">
               <span style="color:#38bdf8;font-weight:bold;white-space:nowrap;">🛠️ VESC Tool WASM</span>
               <button id="btn-webserial-connect" type="button" onclick="window.toggleWebSerial()" style="position:relative;z-index:100002;pointer-events:auto;background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
                 🔌 Connect USB (Web Serial)
               </button>
+              <button id="btn-viewport-toggle" type="button" onclick="window.toggleViewportMode()" style="position:relative;z-index:100002;pointer-events:auto;background:#334155;border:1px solid #475569;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📱 View: Mobile</button>
               <span style="white-space:nowrap;">Serial: <span id="diag-val-serial-status" style="color:#94a3b8;">Disconnected</span></span>
               <span style="white-space:nowrap;">Baud: <span id="diag-val-serial-baud" style="color:#a5f3fc;">--</span></span>
               <span style="white-space:nowrap;">I/O: <span id="diag-val-serial-io" style="color:#cbd5e1;">RX: 0 B / TX: 0 B</span></span>
               <span style="white-space:nowrap;">COI: <span id="diag-val-coi">checking...</span></span>
               <span style="white-space:nowrap;">Qt: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
             </div>
-            <div style="display:flex;gap:6px;align-items:center;">
+            <div style="display:flex;gap:6px;align-items:center;position:relative;z-index:100000;pointer-events:auto;">
               <button type="button" onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
               <button id="btn-toggle-logs" type="button" onclick="window.toggleLogsPanel()" style="background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:3px 10px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;white-space:nowrap;">Toggle Logs 📑</button>
             </div>
           </div>
 
           <!-- Side Log Panel (Positioned off to the side so central VESC Tool UI is never covered) -->
-          <div id="vesc-diagnostics-logs-panel" style="display:none;position:fixed;top:10px;right:10px;bottom:44px;width:520px;max-width:calc(50vw - 245px);min-width:320px;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid rgba(2,132,199,0.4);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);z-index:100000;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;color:#e2e8f0;">
+          <div id="vesc-diagnostics-logs-panel" style="display:none;position:fixed;top:10px;right:10px;bottom:50px;width:520px;max-width:calc(50vw - 245px);min-width:320px;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid rgba(2,132,199,0.4);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);z-index:100000;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;color:#e2e8f0;">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);border-radius:8px 8px 0 0;font-weight:600;">
               <span style="color:#38bdf8;font-size:11px;">📋 VESC Telemetry & System Logs</span>
               <div style="display:flex;gap:6px;">
@@ -574,6 +612,65 @@ jobs:
                 }
               });
             }
+            // Viewport mode toggle function and initial mode detection
+            window.toggleViewportMode = function() {
+              const container = document.getElementById('qt-container');
+              const btn = document.getElementById('btn-viewport-toggle');
+              if (!container) return;
+
+              const isMobile = container.classList.contains('viewport-mobile');
+              if (isMobile) {
+                container.classList.remove('viewport-mobile');
+                container.classList.add('viewport-desktop');
+                if (btn) btn.innerHTML = '🖥️ View: Desktop';
+                try {
+                  const url = new URL(window.location);
+                  url.searchParams.set('desktop', '1');
+                  window.history.replaceState({}, '', url);
+                } catch (_) {}
+                if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Desktop Viewport (100vw).');
+              } else {
+                container.classList.remove('viewport-desktop');
+                container.classList.add('viewport-mobile');
+                if (btn) btn.innerHTML = '📱 View: Mobile';
+                try {
+                  const url = new URL(window.location);
+                  url.searchParams.delete('desktop');
+                  window.history.replaceState({}, '', url);
+                } catch (_) {}
+                if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Mobile Viewport (480px).');
+              }
+
+              const canvas = container.querySelector('canvas') || document.querySelector('canvas');
+              if (canvas && canvas.id !== 'qtcanvas') {
+                canvas.id = 'qtcanvas';
+              }
+
+              [10, 100, 300].forEach(delay => {
+                setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
+              });
+            };
+
+            // Check initial viewport mode based on URL (?desktop=1)
+            (function initViewport() {
+              try {
+                const params = new URLSearchParams(window.location.search);
+                const isDesktop = params.get('desktop') === '1';
+                const container = document.getElementById('qt-container');
+                const btn = document.getElementById('btn-viewport-toggle');
+                if (isDesktop) {
+                  if (container) {
+                    container.classList.remove('viewport-mobile');
+                    container.classList.add('viewport-desktop');
+                  }
+                  if (btn) btn.innerHTML = '🖥️ View: Desktop';
+                  [10, 100, 300].forEach(delay => {
+                    setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
+                  });
+                }
+              } catch (_) {}
+            })();
+
             // Attach explicit event listeners to Connect USB button
             const connectBtn = document.getElementById('btn-webserial-connect');
             if (connectBtn) {
@@ -582,6 +679,28 @@ jobs:
                 e.stopPropagation();
                 window.toggleWebSerial();
               });
+            }
+
+            // Attach explicit event listener to Viewport toggle button
+            const vToggleBtn = document.getElementById('btn-viewport-toggle');
+            if (vToggleBtn) {
+              vToggleBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.toggleViewportMode();
+              });
+            }
+
+            // Observer to keep canvas id set to qtcanvas
+            const cObserver = new MutationObserver(function() {
+              const c = document.querySelector('#qt-container canvas') || document.querySelector('canvas');
+              if (c && c.id !== 'qtcanvas') {
+                c.id = 'qtcanvas';
+              }
+            });
+            const cTarget = document.getElementById('qt-container');
+            if (cTarget) {
+              cObserver.observe(cTarget, { childList: true, subtree: true });
             }
 
             window.__logToScreen('Diagnostics & Web Serial overlay initialized.');
