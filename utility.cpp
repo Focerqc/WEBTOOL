@@ -433,6 +433,13 @@ void Utility::launchDesktopUi()
 
 bool Utility::waitSignal(QObject *sender, QString signal, int timeoutMs)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    Q_UNUSED(sender);
+    Q_UNUSED(signal);
+    Q_UNUSED(timeoutMs);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    return false;
+#else
     // String-based overload for QML callers (signal name is a runtime string).
     bool signalFired = false;
 
@@ -449,13 +456,19 @@ bool Utility::waitSignal(QObject *sender, QString signal, int timeoutMs)
 
     runTree(tree);
     return signalFired;
+#endif
 }
 
 void Utility::sleepWithEventLoop(int timeMs)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    Q_UNUSED(timeMs);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+#else
     runTree(Group {
         timeoutTask(std::chrono::milliseconds{timeMs})
     });
+#endif
 }
 
 bool Utility::canUpdateBaudAllBlocking(VescInterface *vesc, int newBaud)

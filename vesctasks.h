@@ -23,6 +23,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QEventLoop>
+#include <QCoreApplication>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -73,6 +74,7 @@ public:
         m_conn = QObject::connect(sender, signal, this, [this, onSignal = std::forward<Slot>(onSignal)](auto&&... args) {
             std::invoke(onSignal, std::forward<decltype(args)>(args)...);
             m_succeeded = true;
+            m_timer.stop();
             emit done(DoneResult::Success);
         });
     }
@@ -82,6 +84,7 @@ public:
     void connectSignal(Sender *sender, Signal signal) {
         m_conn = QObject::connect(sender, signal, this, [this]() {
             m_succeeded = true;
+            m_timer.stop();
             emit done(DoneResult::Success);
         });
     }
@@ -104,6 +107,7 @@ public:
     }
 
     ~SignalWaitTask() override {
+        m_timer.stop();
         QObject::disconnect(m_conn);
     }
 
@@ -115,6 +119,7 @@ signals:
 private slots:
     void onStringSignalFired() {
         m_succeeded = true;
+        m_timer.stop();
         emit done(DoneResult::Success);
     }
 
@@ -528,6 +533,23 @@ using PollTimerTaskItem = QCustomTask<PollTimerTask>;
 
 inline bool runTree(const Group &root)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    // On WebAssembly main thread without Asyncify, synchronous QEventLoop::exec() is forbidden
+    // because QEventDispatcherWasm::processEvents forbids WaitForMoreEvents.
+    // Run the task tree asynchronously on the heap without blocking the main event dispatcher.
+    auto *tree = new QTaskTree(root);
+    QObject::connect(tree, &QTaskTree::done, tree, [tree](DoneWith) {
+        tree->deleteLater();
+    });
+    tree->start();
+    if (!tree->isRunning()) {
+        tree->deleteLater();
+        return true;
+    }
+    // Process any queued events non-blockingly (without WaitForMoreEvents)
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    return true;
+#else
     QTaskTree tree(root);
     bool success = false;
     QEventLoop loop;
@@ -539,6 +561,7 @@ inline bool runTree(const Group &root)
     if (tree.isRunning())
         loop.exec();
     return success;
+#endif
 }
 
 #endif // VESCTASKS_H

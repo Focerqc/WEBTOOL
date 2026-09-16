@@ -70,6 +70,14 @@ public:
     // Type-safe overload for C++ callers (avoids SIGNAL() macro)
     template<typename Sender, typename Signal>
     static bool waitSignal(Sender *sender, Signal signal, int timeoutMs) {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+        // On WASM, synchronous waiting blocks the browser main thread and cannot receive events.
+        Q_UNUSED(sender);
+        Q_UNUSED(signal);
+        Q_UNUSED(timeoutMs);
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        return false;
+#else
         bool signalFired = false;
         auto tree = Group {
             SignalWaitTaskItem([&](SignalWaitTask &task) {
@@ -83,6 +91,7 @@ public:
         };
         runTree(tree);
         return signalFired;
+#endif
     }
 
     Q_INVOKABLE static void sleepWithEventLoop(int timeMs);

@@ -118,7 +118,11 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mCanTmpFwdSendCanLast = false;
     mCanTmpFwdIdLast = -1;
 
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    mIgnoreCustomConfigs = true;
+#else
     mIgnoreCustomConfigs = false;
+#endif
     mIgnoreTestVersion = false;
 
     mFwSwapDone = false;
@@ -351,7 +355,11 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mUseImperialUnits = mSettings.value("useImperialUnits", useImperialByDefault).toBool();
     mKeepScreenOn = mSettings.value("keepScreenOn", true).toBool();
     mUseWakeLock = mSettings.value("useWakeLock", false).toBool();
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    mLoadQmlUiOnConnect = false;
+#else
     mLoadQmlUiOnConnect = mSettings.value("loadQmlUiOnConnect", true).toBool();
+#endif
     mAllowScreenRotation = mSettings.value("allowScreenRotation", false).toBool();
     mSpeedGaugeUseNegativeValues =  mSettings.value("speedGaugeUseNegativeValues", true).toBool();
     mAskQmlLoad =  mSettings.value("askQmlLoad", true).toBool();
@@ -2313,6 +2321,11 @@ bool VescInterface::lastPortAvailable()
 
 bool VescInterface::autoconnect()
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    emit autoConnectProgressUpdated(1.0, true);
+    emit autoConnectFinished();
+    return false;
+#else
     bool res = false;
 
 #ifdef HAS_SERIALPORT
@@ -2360,6 +2373,7 @@ bool VescInterface::autoconnect()
     emit autoConnectFinished();
     mAutoconnectOngoing = false;
     return res;
+#endif
 }
 
 QString VescInterface::getConnectedPortName()
@@ -3881,6 +3895,7 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
     }
 
     // Read custom configs
+#if !defined(Q_OS_WASM) && !defined(__EMSCRIPTEN__)
     if (!mIgnoreCustomConfigs && params.customConfigNum > 0) {
         bool readConfigsOk = true;
         for (int i = 0;i < params.customConfigNum;i++) {
@@ -3986,8 +4001,10 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
 
         mCustomConfigsLoaded = readConfigsOk;
     }
+#endif
 
     // Read qmlui HW
+#if !defined(Q_OS_WASM) && !defined(__EMSCRIPTEN__)
     if (mLoadQmlUiOnConnect && params.hasQmlHw) {
         bool cacheLoadOk = false;
 
@@ -4066,8 +4083,10 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
             disconnect(conn);
         }
     }
+#endif
 
     // Read qmlui APP
+#if !defined(Q_OS_WASM) && !defined(__EMSCRIPTEN__)
     if (mLoadQmlUiOnConnect && params.hasQmlApp) {
         bool cacheLoadOk = false;
 
@@ -4146,6 +4165,7 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
             disconnect(conn);
         }
     }
+#endif
 
     if (params.hasQmlApp || params.hasQmlHw) {
         emit qmlLoadDone();
