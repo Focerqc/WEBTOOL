@@ -772,16 +772,16 @@ ApplicationWindow {
     }
 
     Rectangle {
-        parent: ApplicationWindow.overlay
-        anchors.fill: parent
+        parent: (appWindow && appWindow.overlay) ? appWindow.overlay : ((typeof Overlay !== 'undefined' && Overlay.overlay) ? Overlay.overlay : (appWindow ? appWindow.contentItem : null))
+        anchors.fill: parent ? parent : undefined
         color: "black"
 
         ConnectScreen {
             id: connScreen
             x: 0
             y: 0
-            height: parent.height
-            width: parent.width
+            height: parent ? parent.height : appWindow.height
+            width: parent ? parent.width : appWindow.width
             opened: true
             fullLogo: true
 
