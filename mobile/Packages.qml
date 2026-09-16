@@ -67,18 +67,22 @@ Item {
         reloadArchive()
     }
 
+    property var allPkgs: []
+
     function reloadArchive() {
         pkgModel.clear()
         var pkgs = mLoader.reloadPackageArchive()
+        var validPkgs = []
 
-        for (var i = 0;i < pkgs.length;i++) {
+        for (var i = 0; i < pkgs.length; i++) {
             if (!pkgs[i].isLibrary && mLoader.shouldShowPackage(pkgs[i])) {
-                pkgModel.append({"pkgName": pkgs[i].name,
-                                    "pkgDescription": pkgs[i].description,
-                                    "pkg": pkgs[i]})
+                validPkgs.push(pkgs[i])
+                pkgModel.append({"pkgIndex": validPkgs.length - 1,
+                                 "pkgName": pkgs[i].name,
+                                 "pkgDescription": pkgs[i].description})
             }
         }
-
+        allPkgs = validPkgs
         enableDialog()
     }
 
@@ -111,7 +115,9 @@ Item {
                     buttonText: pkgName
                     imageSrc: "qrc" + Utility.getThemePath() + "icons/Package-96.png"
                     onClicked: {
-                        openPkgDialog(pkg)
+                        if (pkgIndex !== undefined && pkgIndex >= 0 && pkgIndex < allPkgs.length) {
+                            openPkgDialog(allPkgs[pkgIndex])
+                        }
                     }
                 }
             }
@@ -232,11 +238,17 @@ Item {
     }
 
     function openPkgDialog(pkg) {
-        var line1 = pkg.description.slice(0, pkg.description.indexOf("\n"))
+        if (!pkg) {
+            console.warn("openPkgDialog: pkg is null or undefined")
+            return
+        }
+        var desc = pkg.description || ""
+        var newlineIdx = desc.indexOf("\n")
+        var line1 = newlineIdx >= 0 ? desc.slice(0, newlineIdx) : desc
         if (line1.toUpperCase().includes("<!DOCTYPE HTML PUBLIC")) {
-            installFromPathText.text = pkg.description
+            installFromPathText.text = desc
         } else {
-            installFromPathText.text = Utility.md2html(pkg.description)
+            installFromPathText.text = Utility.md2html(desc)
         }
 
         installPkgCompatibleText.visible = !mLoader.shouldShowPackage(pkg)

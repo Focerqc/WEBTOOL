@@ -10,7 +10,6 @@
         <file>res/images/multi_master.png</file>
         <file>res/images/multi_single.png</file>
         <file>res/images/multi_slave.png</file>
-        <file>res/bootloaders/40_o_47_o_48_o_410_o_411_o_412_o_DAS_RS.bin</file>
         <file>res/fonts/DejaVuSans.ttf</file>
         <file>res/fonts/DejaVuSans-Oblique.ttf</file>
         <file>res/fonts/DejaVuSansMono-Oblique.ttf</file>
@@ -19,7 +18,6 @@
         <file>res/fonts/DejaVuSansMono.ttf</file>
         <file>res/fonts/DejaVuSans-BoldOblique.ttf</file>
         <file>res/fonts/DejaVuSans-Bold.ttf</file>
-        <file>res/bootloaders/generic.bin</file>
         <file>res/images/motors/6374.jpg</file>
         <file>res/images/motors/ebike_dd_1kw.jpg</file>
         <file>res/images/motors/edf_small.jpg</file>
@@ -28,19 +26,7 @@
         <file>res/images/motors/outrunner_mini.jpg</file>
         <file>res/images/motors/outrunner_small.jpg</file>
         <file>res/images/v6plus_top.png</file>
-        <file>res/other_fw/nrf51_remote_mt_32k_32m.bin</file>
-        <file>res/other_fw/nrf51_vesc_ble_16k_16m_rx1_tx2_led3.bin</file>
-        <file>res/other_fw/nrf51_vesc_ble_16k_16m_rx11_tx9_led3.bin</file>
-        <file>res/other_fw/nrf51_vesc_ble_32k_16m_rx11_tx9_led3.bin</file>
-        <file>res/other_fw/nrf51_vesc_ble_32k_32m_rx1_tx2_led3.bin</file>
-        <file>res/other_fw/nrf51_vesc_ble_32k_32m_rx2_tx1_led3.bin</file>
-        <file>res/other_fw/nrf52840_vesc_ble_rx11_tx8_led7.bin</file>
-        <file>res/other_fw/nrf52832_vesc_ble_rx6_tx7_led8.bin</file>
-        <file>res/other_fw/nrf52832_vesc_ble_rx7_tx6_led8.bin</file>
-        <file>res/other_fw/nrf52840_vesc_ble_rx26_tx25_led27.bin</file>
-        <file>res/other_fw/nrf52840_stick_remote.bin</file>
         <file>res/images/slider1.png</file>
-        <file>res/bootloaders/60_o_75_300_o_HD60_o_UAVC_OMEGA_o_75_300_R2_o_60_MK3_o_100_250_o_75_300_R3_o_60_MK4_o_60_MK5_o_HD75.bin</file>
         <file>res/fonts/Roboto/Roboto-Black.ttf</file>
         <file>res/fonts/Roboto/Roboto-BlackItalic.ttf</file>
         <file>res/fonts/Roboto/Roboto-Bold.ttf</file>
@@ -310,7 +296,6 @@
         <file>res/+theme_light/icons_textedit/Align Center-96.png</file>
         <file>res/+theme_light/icons_textedit/Add Image-96.png</file>
         <file>res/+theme_light/icons/bluetooth.png</file>
-        <file>res/other_fw/vesc_power_switch_120.bin</file>
         <file>res/+theme_light/icons/v_icon-256.png</file>
         <file>res/+theme_light/icons/v_icon-96.png</file>
         <file>res/icons/v_icon-96.png</file>
@@ -321,10 +306,8 @@
         <file>res/+theme_light/icons/stormcore-96.png</file>
         <file>res/+theme_light/icons/motor_side.png</file>
         <file>res/icons/motor_side.png</file>
-        <file>res/other_fw/nrf52840_stormcore_ble_rx31_tx30_led5.bin</file>
         <file>res/fonts/Exan-Regular.ttf</file>
         <file>res/fonts/Roboto/RobotoMono-VariableFont_wght.ttf</file>
-        <file>res/other_fw/nrf52840_wand_mag.bin</file>
         <file>res/icons/Package-96.png</file>
         <file>res/+theme_light/icons/Package-96.png</file>
         <file>res/icons/Connected-hl-96.png</file>

@@ -50,6 +50,14 @@ build_android_signed
 *.DS_Store
 
 res/firmwares/*/
+res/firmwares_bms/
+res/firmwares_custom_module/
+res/bootloaders/
+res/bootloaders_bms/
+res/bootloaders_custom_module/
+res/other_fw/
+res/**/*.bin
+res/**/*.hex
 /build
 
 # Nix output

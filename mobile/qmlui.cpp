@@ -20,6 +20,9 @@
 #include "qmlui.h"
 #include "rtdatastore.h"
 #include "esp32/esp32flash.h"
+#include "commands.h"
+#include "configparams.h"
+#include "codeloader.h"
 
 #include <QQuickStyle>
 #include <QApplication>
@@ -54,6 +57,11 @@ bool QmlUi::startQmlUi()
         new RtDataStore(mVesc->commands(), this));
     mEngine->rootContext()->setContextProperty("Esp32Flash", new Esp32Flash(this));
 
+    // Register legacy module URIs for compatibility with packages authored for Qt 5 VESC Tool
+    qmlRegisterType<Commands>("Vedder.vesc.commands", 1, 0, "Commands");
+    qmlRegisterType<ConfigParams>("Vedder.vesc.configparams", 1, 0, "ConfigParams");
+    qmlRegisterType<CodeLoader>("Vedder.vesc.codeloader", 1, 0, "CodeLoader");
+
     mEngine->addImportPath(QStringLiteral("qrc:/"));
 
     mEngine->load(QUrl(QLatin1String("qrc:/mobile/main.qml")));
@@ -80,6 +88,11 @@ bool QmlUi::startDesktopQmlUi()
     mEngine->rootContext()->setContextProperty("RtDataStore",
         new RtDataStore(mVesc->commands(), this));
     mEngine->rootContext()->setContextProperty("Esp32Flash", new Esp32Flash(this));
+
+    // Register legacy module URIs for compatibility with packages authored for Qt 5 VESC Tool
+    qmlRegisterType<Commands>("Vedder.vesc.commands", 1, 0, "Commands");
+    qmlRegisterType<ConfigParams>("Vedder.vesc.configparams", 1, 0, "ConfigParams");
+    qmlRegisterType<CodeLoader>("Vedder.vesc.codeloader", 1, 0, "CodeLoader");
 
     // Add import path so desktop pages can resolve mobile components
     mEngine->addImportPath(QStringLiteral("qrc:/"));

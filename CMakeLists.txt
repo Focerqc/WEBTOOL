@@ -759,11 +759,9 @@ endif()
 # ---------------------------------------------------------------------------
 set(RESOURCE_FILES
     res.qrc
-    res_custom_module.qrc
     res_lisp.qrc
     res_qml.qrc
     res/config/res_config.qrc
-    res_fw_bms.qrc
     mobile/qml.qrc
     qmarkdowntextedit/media.qrc
     QCodeEditor/resources/qcodeeditor_resources.qrc
@@ -771,7 +769,11 @@ set(RESOURCE_FILES
 )
 
 if(NOT EXCLUDE_FW)
-    list(APPEND RESOURCE_FILES res/firmwares/res_fw.qrc)
+    list(APPEND RESOURCE_FILES
+        res/firmwares/res_fw.qrc
+        res_fw_bms.qrc
+        res_custom_module.qrc
+    )
 endif()
 
 # ---------------------------------------------------------------------------

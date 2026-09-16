@@ -984,19 +984,25 @@ ApplicationWindow {
                 tabBar.enabled = false
             }
 
-            hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
-            mainSwipeView.insertItem(1, uiHwPage)
-            tabBar.insertItem(1, uiHwButton)
-            uiHwPage.visible = true
+            try {
+                hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
+                if (hwUiObj) {
+                    mainSwipeView.insertItem(1, uiHwPage)
+                    tabBar.insertItem(1, uiHwButton)
+                    uiHwPage.visible = true
 
-            uiHwButton.text = "HwUi"
-            if (hwUiObj.tabTitle) {
-                uiHwButton.text = hwUiObj.tabTitle
-            }
+                    uiHwButton.text = "HwUi"
+                    if (hwUiObj.tabTitle) {
+                        uiHwButton.text = hwUiObj.tabTitle
+                    }
 
-            if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
-                mainSwipeView.setCurrentIndex(0)
-                mainSwipeView.setCurrentIndex(1)
+                    if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
+                        mainSwipeView.setCurrentIndex(0)
+                        mainSwipeView.setCurrentIndex(1)
+                    }
+                }
+            } catch (err) {
+                console.warn("Failed to create HwUi QML object:", err)
             }
         } else {
             uiHwPage.visible = false
@@ -1011,19 +1017,25 @@ ApplicationWindow {
                 tabBar.enabled = false
             }
 
-            appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
-            mainSwipeView.insertItem(1, uiAppPage)
-            tabBar.insertItem(1, uiAppButton)
-            uiAppPage.visible = true
+            try {
+                appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
+                if (appUiObj) {
+                    mainSwipeView.insertItem(1, uiAppPage)
+                    tabBar.insertItem(1, uiAppButton)
+                    uiAppPage.visible = true
 
-            uiAppButton.text = "AppUi"
-            if (appUiObj.tabTitle) {
-                uiAppButton.text = appUiObj.tabTitle
-            }
+                    uiAppButton.text = "AppUi"
+                    if (appUiObj.tabTitle) {
+                        uiAppButton.text = appUiObj.tabTitle
+                    }
 
-            if (VescIf.getLastFwRxParams().qmlAppFullscreen) {
-                mainSwipeView.setCurrentIndex(0)
-                mainSwipeView.setCurrentIndex(1)
+                    if (VescIf.getLastFwRxParams().qmlAppFullscreen) {
+                        mainSwipeView.setCurrentIndex(0)
+                        mainSwipeView.setCurrentIndex(1)
+                    }
+                }
+            } catch (err) {
+                console.warn("Failed to create AppUi QML object:", err)
             }
         } else {
             uiAppPage.visible = false

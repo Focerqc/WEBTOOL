@@ -625,8 +625,14 @@ Item {
         default:
             break
         }
-        includedFwList = list
-        selectedIncludedIndex = list.length > 0 ? 0 : -1
+        var filteredList = []
+        for (var k = 0; k < list.length; k++) {
+            if (Utility.fileExists(list[k].path)) {
+                filteredList.push(list[k])
+            }
+        }
+        includedFwList = filteredList
+        selectedIncludedIndex = filteredList.length > 0 ? 0 : -1
     }
 
     function initUicrModel() {
