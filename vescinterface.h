@@ -336,6 +336,8 @@ signals:
     void customConfigLoadDone();
     void qmlLoadDone();
     void fwArchiveDlProgress(QString msg, double prog);
+    void fwArchiveDownloaded(bool success);
+    void configsDownloaded(bool success);
 
 public slots:
 

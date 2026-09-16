@@ -16,11 +16,61 @@ class CrossOriginIsolatedHandler(SimpleHTTPRequestHandler):
         self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         self.send_header("Cross-Origin-Resource-Policy", "cross-origin")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
         # Disable caching during development
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         super().end_headers()
+
+    def do_OPTIONS(self):
+        if self.path.startswith("/api/proxy"):
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_OPTIONS()
+
+    def do_GET(self):
+        if self.path.startswith("/api/proxy"):
+            self.handle_proxy()
+            return
+        super().do_GET()
+
+    def handle_proxy(self):
+        from urllib.parse import urlparse, parse_qs
+        import urllib.request
+        import shutil
+
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        target_urls = qs.get("url")
+        if not target_urls or not target_urls[0]:
+            self.send_response(400)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Missing 'url' query parameter")
+            return
+
+        target_url = target_urls[0]
+        try:
+            req = urllib.request.Request(
+                target_url,
+                headers={"User-Agent": "VESC-Tool-Web/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                self.send_response(resp.status)
+                for header in ["Content-Type", "Content-Length", "ETag", "Last-Modified", "Content-Disposition"]:
+                    val = resp.headers.get(header)
+                    if val:
+                        self.send_header(header, val)
+                self.end_headers()
+                shutil.copyfileobj(resp, self.wfile)
+        except Exception as e:
+            self.send_response(502)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(f"Proxy error: {e}".encode("utf-8"))
 
 def run_server(port=8080, directory=None):
     if directory is None:

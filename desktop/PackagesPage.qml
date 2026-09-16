@@ -18,6 +18,17 @@ Item {
         Component.onCompleted: {
             mLoader.setVesc(VescIf)
         }
+        onPackageArchiveDownloaded: function(success) {
+            downloadInProgress = false
+            if (success) {
+                dlText = "Download Finished"
+                VescIf.emitStatusMessage("Downloads OK", true)
+            } else {
+                dlText = "Download Failed"
+                VescIf.emitStatusMessage("Downloads Failed", false)
+            }
+            reloadArchive()
+        }
     }
 
     // ---- State properties ----
@@ -800,18 +811,11 @@ Item {
                     dlValue = 0
 
                     Qt.callLater(function() {
-                        var ok = mLoader.downloadPackageArchive()
-
-                        if (ok) {
-                            dlText = "Download Finished"
-                            VescIf.emitStatusMessage("Downloads OK", true)
-                        } else {
+                        if (!mLoader.downloadPackageArchive()) {
+                            downloadInProgress = false
                             dlText = "Download Failed"
                             VescIf.emitStatusMessage("Downloads Failed", false)
                         }
-
-                        downloadInProgress = false
-                        reloadArchive()
                     })
                 }
             }

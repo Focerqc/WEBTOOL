@@ -54,3 +54,7 @@ res/firmwares/*/
 
 # Nix output
 /result
+
+# Python
+__pycache__/
+*.pyc

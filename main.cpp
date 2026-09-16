@@ -288,6 +288,30 @@ int main(int argc, char *argv[])
     bool qmlOtherScreen = false;
     bool useMobileUi = false;
 #if defined(__EMSCRIPTEN__)
+    EM_ASM(
+        try {
+            if (typeof FS !== 'undefined' && typeof IDBFS !== 'undefined') {
+                try {
+                    FS.mkdirTree('/home/web_user/.local/share/vesc_tool');
+                } catch (e) {}
+                try {
+                    FS.mount(IDBFS, {}, '/home/web_user/.local/share/vesc_tool');
+                    FS.syncfs(true, function(err) {
+                        if (err) {
+                            console.warn("[IDBFS] Initial sync error:", err);
+                        } else {
+                            console.log("[IDBFS] Synced persistent storage from IndexedDB successfully.");
+                        }
+                    });
+                } catch (e) {
+                    console.warn("[IDBFS] Mount error:", e);
+                }
+            }
+        } catch (e) {
+            console.warn("[IDBFS] Setup exception:", e);
+        }
+    );
+
     int isDesktopParam = EM_ASM_INT({
         try {
             if (typeof window !== 'undefined' && window.location) {

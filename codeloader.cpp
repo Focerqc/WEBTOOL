@@ -21,6 +21,7 @@
 #include "qqmlcontext.h"
 #include "utility.h"
 #include "vesctasks.h"
+#include <memory>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
@@ -1039,39 +1040,40 @@ QVariantList CodeLoader::reloadPackageArchive()
 
 bool CodeLoader::downloadPackageArchive()
 {
-    bool res = false;
-
     QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if(!QDir(appDataLoc).exists()) {
         QDir().mkpath(appDataLoc);
     }
     QString path = appDataLoc + "/vesc_pkg_all.rcc";
     QResource::unregisterResource(path);
-    QFile file(path);
 
-    if (file.open(QIODevice::WriteOnly)) {
-        runTree(Group{NetworkReplyTaskItem([this, &file](NetworkReplyTask &task) {
-            task.setUrl(QUrl("http://home.vedder.se/vesc_pkg/vesc_pkg_all.rcc"));
-            task.setOutputDevice(&file);
-            task.setProgressCallback([this](qint64 bytesReceived, qint64 bytesTotal) {
-                emit downloadProgress(bytesReceived, bytesTotal);
-            });
-            return SetupResult::Continue;
-        }, [&res](const NetworkReplyTask &task, DoneWith doneWith) {
-            if (doneWith == DoneWith::Success) {
-                res = true;
-            }
-            return DoneResult::Success;
-        })});
-
-        file.close();
-
-        if (res) {
-            QResource::registerResource(path);
-        }
+    auto file = std::make_shared<QFile>(path);
+    if (!file->open(QIODevice::WriteOnly)) {
+        emit packageArchiveDownloaded(false);
+        return false;
     }
 
-    return res;
+    QFile *filePtr = file.get();
+
+    runTree(Group{NetworkReplyTaskItem([this, filePtr](NetworkReplyTask &task) {
+        task.setUrl(QUrl("http://home.vedder.se/vesc_pkg/vesc_pkg_all.rcc"));
+        task.setOutputDevice(filePtr);
+        task.setProgressCallback([this](qint64 bytesReceived, qint64 bytesTotal) {
+            emit downloadProgress(bytesReceived, bytesTotal);
+        });
+        return SetupResult::Continue;
+    }, [this, file, path](const NetworkReplyTask &task, DoneWith doneWith) {
+        file->close();
+        bool success = (doneWith == DoneWith::Success);
+        if (success) {
+            QResource::registerResource(path);
+            syncFsToIndexedDb();
+        }
+        emit packageArchiveDownloaded(success);
+        return DoneResult::Success;
+    })});
+
+    return true;
 }
 
 void CodeLoader::abortDownloadUpload()

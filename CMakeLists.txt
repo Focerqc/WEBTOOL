@@ -1046,6 +1046,7 @@ endif()
 if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
     target_link_options(${APP_TARGET} PRIVATE
         --profiling-funcs
+        -lidbfs.js
     )
 endif()
 

@@ -39,6 +39,17 @@ Item {
         id: fwHelper
     }
 
+    Connections {
+        target: VescIf
+        function onFwArchiveDownloaded(success) {
+            fwHelper.reloadLatest()
+            updateFwText()
+            latestUpdateButton.enabled = true
+            updateArch(VescIf.getLastFwRxParams())
+            archUpdateButton.enabled = true
+        }
+    }
+
     GridLayout {
         anchors.fill: parent
         columns: isHorizontal ? 2 : 1
@@ -221,11 +232,9 @@ Item {
                                 repeat: false
                                 running: false
                                 onTriggered: {
+                                    latestUpdateButton.enabled = false
                                     VescIf.downloadFwLatest()
                                     VescIf.downloadConfigs()
-                                    fwHelper.reloadLatest()
-                                    updateFwText()
-                                    latestUpdateButton.enabled = true
                                 }
                             }
                         }
@@ -668,8 +677,6 @@ Item {
         onTriggered: {
             // dlArchive...
             VescIf.downloadFwArchive()
-            updateArch(VescIf.getLastFwRxParams())
-            archUpdateButton.enabled = true
         }
     }
 

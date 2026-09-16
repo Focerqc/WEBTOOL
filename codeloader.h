@@ -74,6 +74,7 @@ public:
 
 signals:
     void downloadProgress(qint64 bytesReceived, qint64 bytesTotal);
+    void packageArchiveDownloaded(bool success);
     void lispUploadProgress(qint64 bytes, qint64 bytesTotal);
 
 private:

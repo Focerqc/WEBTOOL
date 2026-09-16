@@ -50,6 +50,10 @@ Item {
         Component.onCompleted: {
             mLoader.setVesc(VescIf)
         }
+        onPackageArchiveDownloaded: function(success) {
+            reloadArchive()
+            enableDialog()
+        }
     }
 
     Component.onCompleted: {
@@ -126,9 +130,9 @@ Item {
                     repeat: false
                     running: false
                     onTriggered: {
-                        mLoader.downloadPackageArchive()
-                        reloadArchive()
-                        enableDialog()
+                        if (!mLoader.downloadPackageArchive()) {
+                            enableDialog()
+                        }
                     }
                 }
             }

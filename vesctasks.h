@@ -42,6 +42,8 @@
 using namespace QtTaskTree;
 
 #if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+
 inline QUrl toProxyUrl(const QUrl &url)
 {
     if (!url.isValid()) {
@@ -70,6 +72,25 @@ inline QString toProxyUrl(const QString &urlStr)
     }
     return urlStr;
 }
+
+inline void syncFsToIndexedDb()
+{
+    EM_ASM(
+        try {
+            if (typeof FS !== 'undefined' && FS.syncfs) {
+                FS.syncfs(false, function(err) {
+                    if (err) {
+                        console.warn("[IDBFS] Error persisting to IndexedDB:", err);
+                    } else {
+                        console.log("[IDBFS] Successfully synced files to IndexedDB.");
+                    }
+                });
+            }
+        } catch(e) {
+            console.warn("[IDBFS] syncfs exception:", e);
+        }
+    );
+}
 #else
 inline QUrl toProxyUrl(const QUrl &url)
 {
@@ -80,6 +101,8 @@ inline QString toProxyUrl(const QString &urlStr)
 {
     return urlStr;
 }
+
+inline void syncFsToIndexedDb() {}
 #endif
 
 // ============================================================================
@@ -215,11 +238,14 @@ public:
     void start() {
         m_reply = m_manager.get(QNetworkRequest(toProxyUrl(m_url)));
 
+        connect(m_reply, &QNetworkReply::readyRead, this, [this]() {
+            if (m_outputDevice) {
+                m_outputDevice->write(m_reply->readAll());
+            }
+        });
+
         connect(m_reply, &QNetworkReply::downloadProgress, this,
                 [this](qint64 bytesReceived, qint64 bytesTotal) {
-            if (m_outputDevice) {
-                m_outputDevice->write(m_reply->read(m_reply->size()));
-            }
             if (m_progressCb) {
                 m_progressCb(bytesReceived, bytesTotal);
             }
@@ -228,7 +254,10 @@ public:
         connect(m_reply, &QNetworkReply::finished, this, [this]() {
             m_error = m_reply->error();
             if (m_outputDevice) {
-                m_outputDevice->write(m_reply->readAll());
+                QByteArray remaining = m_reply->readAll();
+                if (!remaining.isEmpty()) {
+                    m_outputDevice->write(remaining);
+                }
             } else {
                 m_data = m_reply->readAll();
             }

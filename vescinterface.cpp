@@ -32,6 +32,7 @@
 #include "vesctasks.h"
 #include "utility.h"
 #include "heatshrink/heatshrinkif.h"
+#include <memory>
 
 #ifdef HAS_SERIALPORT
 #ifdef Q_OS_WASM
@@ -4341,137 +4342,173 @@ bool VescInterface::connectTcpHubUuid(QString uuid)
 
 bool VescInterface::downloadFwArchive()
 {
-    bool res = false;
-
     QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!QDir(appDataLoc).exists()) {
         QDir().mkpath(appDataLoc);
     }
     QString path = appDataLoc + "/res_fw.rcc";
-    QFile file(path);
     QResource::unregisterResource(path);
-    if (file.open(QIODevice::WriteOnly)) {
-        runTree(Group{NetworkReplyTaskItem([this, &file, &res](NetworkReplyTask &task) {
-            task.setUrl(QUrl("http://home.vedder.se/vesc_fw_archive/res_fw.rcc"));
-            task.setOutputDevice(&file);
-            task.setProgressCallback([this, &file](qint64 bytesReceived, qint64 bytesTotal) {
-                emit fwArchiveDlProgress("Downloading " + QFileInfo(file).fileName(),
-                                         (double)bytesReceived / (double)bytesTotal);
-            });
-            return SetupResult::Continue;
-        }, [this, &res](const NetworkReplyTask &task, DoneWith doneWith) {
-            if (doneWith == DoneWith::Success) {
-                emit fwArchiveDlProgress("Download Done", 1.0);
-                res = true;
-            } else {
-                emit fwArchiveDlProgress("Download Failed", 0.0);
-            }
-            return DoneResult::Success; // always succeed so we can clean up
-        })});
 
-        file.close();
-        res = true;
-        QResource::registerResource(path);
-    } else {
+    auto file = std::make_shared<QFile>(path);
+    if (!file->open(QIODevice::WriteOnly)) {
         emit fwArchiveDlProgress("Could not open local file", 0.0);
+        emit fwArchiveDownloaded(false);
+        return false;
     }
 
-    return res;
+    QFile *filePtr = file.get();
+
+    runTree(Group{NetworkReplyTaskItem([this, filePtr](NetworkReplyTask &task) {
+        task.setUrl(QUrl("http://home.vedder.se/vesc_fw_archive/res_fw.rcc"));
+        task.setOutputDevice(filePtr);
+        task.setProgressCallback([this, filePtr](qint64 bytesReceived, qint64 bytesTotal) {
+            emit fwArchiveDlProgress("Downloading " + QFileInfo(*filePtr).fileName(),
+                                     (double)bytesReceived / (double)bytesTotal);
+        });
+        return SetupResult::Continue;
+    }, [this, file, path](const NetworkReplyTask &task, DoneWith doneWith) {
+        file->close();
+        bool success = (doneWith == DoneWith::Success);
+        if (success) {
+            emit fwArchiveDlProgress("Download Done", 1.0);
+            QResource::registerResource(path);
+            syncFsToIndexedDb();
+        } else {
+            emit fwArchiveDlProgress("Download Failed", 0.0);
+        }
+        emit fwArchiveDownloaded(success);
+        return DoneResult::Success;
+    })});
+
+    return true;
 }
 
 bool VescInterface::downloadFwLatest()
 {
-    auto downloadFws = [this](QUrl url, QString path) {
-        bool res = false;
-
-        QFile file(path);
-        QResource::unregisterResource(path);
-        if (file.open(QIODevice::WriteOnly)) {
-            runTree(Group{NetworkReplyTaskItem([this, &file, &url](NetworkReplyTask &task) {
-                task.setUrl(url);
-                task.setOutputDevice(&file);
-                task.setProgressCallback([this, &file](qint64 bytesReceived, qint64 bytesTotal) {
-                    emit fwArchiveDlProgress("Downloading " + QFileInfo(file).fileName(),
-                                             (double)bytesReceived / (double)bytesTotal);
-                });
-                return SetupResult::Continue;
-            }, [this, &res](const NetworkReplyTask &task, DoneWith doneWith) {
-                if (doneWith == DoneWith::Success) {
-                    emit fwArchiveDlProgress("Download Done", 1.0);
-                } else {
-                    emit fwArchiveDlProgress("Download Failed", 0.0);
-                }
-                return DoneResult::Success;
-            })});
-
-            file.close();
-            QResource::registerResource(path);
-            res = true;
-        } else {
-            emit fwArchiveDlProgress("Could not open local file", 0.0);
-        }
-
-        return res;
-    };
-
     QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!QDir(appDataLoc).exists()) {
         QDir().mkpath(appDataLoc);
     }
 
     QString fwStr = QString::number(VT_VERSION, 'f', 2);
-    QUrl url(QString("http://home.vedder.se/vesc_fw_archive/res_fw_") + fwStr + ".rcc");
-    QString path = appDataLoc + "/res_fw_" + fwStr + ".rcc";
-    bool res1 = downloadFws(url, path);
+    QUrl url1(QString("http://home.vedder.se/vesc_fw_archive/res_fw_") + fwStr + ".rcc");
+    QString path1 = appDataLoc + "/res_fw_" + fwStr + ".rcc";
 
-    url = "http://home.vedder.se/vesc_fw_archive/res_fw_esp32.rcc";
-    path = appDataLoc + "/res_fw_esp32.rcc";
-    bool res2 = downloadFws(url, path);
+    QUrl url2("http://home.vedder.se/vesc_fw_archive/res_fw_esp32.rcc");
+    QString path2 = appDataLoc + "/res_fw_esp32.rcc";
 
-    return res1 || res2;
+    QResource::unregisterResource(path1);
+    QResource::unregisterResource(path2);
+
+    auto file1 = std::make_shared<QFile>(path1);
+    auto file2 = std::make_shared<QFile>(path2);
+
+    if (!file1->open(QIODevice::WriteOnly) || !file2->open(QIODevice::WriteOnly)) {
+        emit fwArchiveDlProgress("Could not open local file", 0.0);
+        emit fwArchiveDownloaded(false);
+        return false;
+    }
+
+    QFile *filePtr1 = file1.get();
+    QFile *filePtr2 = file2.get();
+
+    auto state = std::make_shared<QPair<int, bool>>(0, false);
+
+    auto onOneDone = [this, file1, path1, file2, path2, state](bool ok) {
+        state->first++;
+        if (ok) state->second = true;
+        if (state->first == 2) {
+            if (state->second) {
+                emit fwArchiveDlProgress("Download Done", 1.0);
+                syncFsToIndexedDb();
+            } else {
+                emit fwArchiveDlProgress("Download Failed", 0.0);
+            }
+            emit fwArchiveDownloaded(state->second);
+        }
+    };
+
+    runTree(Group{NetworkReplyTaskItem([this, filePtr1, url1](NetworkReplyTask &task) {
+        task.setUrl(url1);
+        task.setOutputDevice(filePtr1);
+        task.setProgressCallback([this, filePtr1](qint64 bytesReceived, qint64 bytesTotal) {
+            emit fwArchiveDlProgress("Downloading " + QFileInfo(*filePtr1).fileName(),
+                                     (double)bytesReceived / (double)bytesTotal);
+        });
+        return SetupResult::Continue;
+    }, [file1, path1, onOneDone](const NetworkReplyTask &task, DoneWith doneWith) {
+        file1->close();
+        bool ok = (doneWith == DoneWith::Success);
+        if (ok) QResource::registerResource(path1);
+        onOneDone(ok);
+        return DoneResult::Success;
+    })});
+
+    runTree(Group{NetworkReplyTaskItem([this, filePtr2, url2](NetworkReplyTask &task) {
+        task.setUrl(url2);
+        task.setOutputDevice(filePtr2);
+        task.setProgressCallback([this, filePtr2](qint64 bytesReceived, qint64 bytesTotal) {
+            emit fwArchiveDlProgress("Downloading " + QFileInfo(*filePtr2).fileName(),
+                                     (double)bytesReceived / (double)bytesTotal);
+        });
+        return SetupResult::Continue;
+    }, [file2, path2, onOneDone](const NetworkReplyTask &task, DoneWith doneWith) {
+        file2->close();
+        bool ok = (doneWith == DoneWith::Success);
+        if (ok) QResource::registerResource(path2);
+        onOneDone(ok);
+        return DoneResult::Success;
+    })});
+
+    return true;
 }
 
 bool VescInterface::downloadConfigs()
 {
-    bool res = false;
     QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if(!QDir(appDataLoc).exists()) {
         QDir().mkpath(appDataLoc);
     }
     QString path = appDataLoc + "/res_config.rcc";
-    QFile file(path);
     QResource::unregisterResource(path);
 
-    if (file.open(QIODevice::WriteOnly)) {
-        runTree(Group{NetworkReplyTaskItem([this, &file](NetworkReplyTask &task) {
-            task.setUrl(QUrl("http://home.vedder.se/vesc_fw_archive/res_config.rcc"));
-            task.setOutputDevice(&file);
-            task.setProgressCallback([this](qint64 bytesReceived, qint64 bytesTotal) {
-                emit fwArchiveDlProgress("Downloading...", (double)bytesReceived / (double)bytesTotal);
-            });
-            return SetupResult::Continue;
-        }, [this, &res, &file, &path](const NetworkReplyTask &task, DoneWith doneWith) {
-            if (doneWith == DoneWith::Success) {
-                emit fwArchiveDlProgress("Download Done", 1.0);
-                file.close();
-                res = QResource::registerResource(path);
-
-                if (res) {
-                    qDebug() << "Reloaded config resource successfully";
-                } else {
-                    qWarning() << "Could not reload config resource";
-                }
-            } else {
-                emit fwArchiveDlProgress("Download Failed", 0.0);
-                file.close();
-            }
-            return DoneResult::Success;
-        })});
-    } else {
+    auto file = std::make_shared<QFile>(path);
+    if (!file->open(QIODevice::WriteOnly)) {
         emit fwArchiveDlProgress("Could not open local file", 0.0);
+        emit configsDownloaded(false);
+        return false;
     }
 
-    return res;
+    QFile *filePtr = file.get();
+
+    runTree(Group{NetworkReplyTaskItem([this, filePtr](NetworkReplyTask &task) {
+        task.setUrl(QUrl("http://home.vedder.se/vesc_fw_archive/res_config.rcc"));
+        task.setOutputDevice(filePtr);
+        task.setProgressCallback([this](qint64 bytesReceived, qint64 bytesTotal) {
+            emit fwArchiveDlProgress("Downloading...", (double)bytesReceived / (double)bytesTotal);
+        });
+        return SetupResult::Continue;
+    }, [this, file, path](const NetworkReplyTask &task, DoneWith doneWith) {
+        file->close();
+        bool success = (doneWith == DoneWith::Success);
+        if (success) {
+            emit fwArchiveDlProgress("Download Done", 1.0);
+            bool res = QResource::registerResource(path);
+            if (res) {
+                qDebug() << "Reloaded config resource successfully";
+                syncFsToIndexedDb();
+            } else {
+                qWarning() << "Could not reload config resource";
+            }
+            emit configsDownloaded(res);
+        } else {
+            emit fwArchiveDlProgress("Download Failed", 0.0);
+            emit configsDownloaded(false);
+        }
+        return DoneResult::Success;
+    })});
+
+    return true;
 }
 
 QString VescInterface::getLastTcpHubServer() const

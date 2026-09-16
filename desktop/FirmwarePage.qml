@@ -55,6 +55,15 @@ Item {
     property string uploadText: ""
     property double uploadValue: 0.0
 
+    Connections {
+        target: VescIf
+        function onFwArchiveDownloaded(success) {
+            downloadInProgress = false
+            reloadLatest()
+            reloadArchive()
+        }
+    }
+
     Component.onCompleted: {
         supportedFwStr = VescIf.getSupportedFirmwares().join(", ")
         reloadLatest()
@@ -614,8 +623,6 @@ Item {
                                     Qt.callLater(function() {
                                         VescIf.downloadFwLatest()
                                         VescIf.downloadConfigs()
-                                        reloadLatest()
-                                        downloadInProgress = false
                                     })
                                 }
                             }
@@ -891,8 +898,6 @@ Item {
                                     dlArchText = "Preparing download..."
                                     Qt.callLater(function() {
                                         VescIf.downloadFwArchive()
-                                        reloadArchive()
-                                        downloadInProgress = false
                                     })
                                 }
                             }
