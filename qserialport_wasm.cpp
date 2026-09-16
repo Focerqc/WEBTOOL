@@ -3,6 +3,7 @@
 #include "wasm_serial_bridge.h"
 #include <QDebug>
 #include <QCoreApplication>
+#include <cstdio>
 
 // ---------------------------------------------------------------------------
 // QSerialPortInfo Implementation
@@ -274,31 +275,16 @@ bool QSerialPort::open(OpenMode mode)
     if (mPortId < 0) {
         setPortName(mPortName);
         if (mPortId < 0) {
-            // Default to first port if available, or 0 for WebSerial mode
-            if (webserial_get_port_count() > 0) {
-                mPortId = 0;
-            } else if (mPortName.contains("WebSerial", Qt::CaseInsensitive)) {
-                mPortId = 0;
-            } else {
-                mLastError = DeviceNotFoundError;
-                setErrorString("No WebSerial device found. Please click Refresh or pair device.");
-                emit errorOccurred(mLastError);
-                return false;
-            }
+            mPortId = 0;
         }
     }
 
     webserial_set_callbacks(mPortId, onRxDataStatic, onErrorStatic, this);
 
-    int res = webserial_open(mPortId, mBaudRate, (int)mDataBits, (int)mStopBits, (int)mParity, (int)mFlowControl);
-    if (!res && !mPortName.contains("WebSerial", Qt::CaseInsensitive)) {
-        mLastError = OpenError;
-        setErrorString("Failed to open WebSerial device.");
-        emit errorOccurred(mLastError);
-        return false;
-    }
+    webserial_open(mPortId, mBaudRate, (int)mDataBits, (int)mStopBits, (int)mParity, (int)mFlowControl);
 
-    setOpenMode(mode);
+    OpenMode openMode = (mode == QIODevice::NotOpen) ? QIODevice::ReadWrite : mode;
+    setOpenMode(openMode);
     mLastError = NoError;
     return true;
 }
@@ -409,14 +395,19 @@ qint64 QSerialPort::readData(char *data, qint64 maxlen)
     return webserial_read(mPortId, reinterpret_cast<uint8_t*>(data), static_cast<int>(maxlen));
 }
 
-qint64 QSerialPort::writeData(const char *data, qint64 len)
+qint64 QSerialPort::writeData(const char *data, qint64 maxSize)
 {
-    if (len <= 0) return 0;
-    wasm_serial_tx(reinterpret_cast<const uint8_t*>(data), static_cast<int>(len));
+    if (maxSize <= 0 || !data) return 0;
+
+    printf("[SERIAL TX] writeData called with %lld bytes\n", (long long)maxSize);
+    fflush(stdout);
+
+    wasm_serial_tx(reinterpret_cast<const uint8_t*>(data), static_cast<int>(maxSize));
+
     if (mPortId >= 0) {
-        webserial_write(mPortId, reinterpret_cast<const uint8_t*>(data), static_cast<int>(len));
+        webserial_write(mPortId, reinterpret_cast<const uint8_t*>(data), static_cast<int>(maxSize));
     }
-    return len;
+    return maxSize;
 }
 
 void QSerialPort::onRxDataStatic(int portId, void *userData)

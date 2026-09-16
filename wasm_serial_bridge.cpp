@@ -10,7 +10,7 @@
 #include <emscripten/em_js.h>
 
 EM_JS(void, js_wasm_serial_tx, (const uint8_t* ptr, int len), {
-    if (typeof window !== 'undefined' && window.wasm_serial_tx && ptr && len > 0) {
+    if (window.wasm_serial_tx && ptr && len > 0) {
         const bytes = new Uint8Array(HEAPU8.buffer, ptr, len);
         window.wasm_serial_tx(bytes);
     }
@@ -113,10 +113,6 @@ WASM_EXPORT void wasm_serial_set_connected(int connected) {
 }
 
 void wasm_serial_tx(const uint8_t* data, int len) {
-    if (!data || len <= 0) {
-        return;
-    }
-
 #if defined(__EMSCRIPTEN__)
     js_wasm_serial_tx(data, len);
 #else

@@ -233,6 +233,7 @@ jobs:
             let isSerialConnected = false;
             let bytesRx = 0;
             let bytesTx = 0;
+            let txBytes = 0;
 
             function formatBytes(bytes) {
               if (bytes < 1024) return bytes + ' B';
@@ -255,7 +256,7 @@ jobs:
                 baudEl.textContent = isSerialConnected ? '115200' : '--';
               }
               if (ioEl) {
-                ioEl.textContent = 'RX: ' + formatBytes(bytesRx) + ' / TX: ' + formatBytes(bytesTx);
+                ioEl.textContent = 'RX: ' + formatBytes(bytesRx) + ' / TX: ' + formatBytes(bytesTx || txBytes);
               }
               if (btn) {
                 if (isSerialConnected) {
@@ -269,6 +270,11 @@ jobs:
                 }
               }
             }
+
+            function updateHudCounters() {
+              updateSerialHud();
+            }
+            window.updateHudCounters = updateHudCounters;
 
             window.toggleWebSerial = async function() {
               if (isSerialConnected) {
@@ -390,14 +396,22 @@ jobs:
             }
 
             // Expose outgoing serial TX hook for C++ wasm_serial_tx
-            window.wasm_serial_tx = async function(chunk) {
-              if (!serialWriter || !isSerialConnected) return;
-              try {
-                await serialWriter.write(chunk);
-                bytesTx += chunk.length;
-                updateSerialHud();
-              } catch (err) {
-                window.__logToScreen('[SERIAL TX ERROR] ' + (err.message || err), '#f87171');
+            window.wasm_serial_tx = async function(uint8Array) {
+              if (serialWriter) {
+                try {
+                  // Ensure standard Uint8Array buffer (protects against SharedArrayBuffer WebIDL errors)
+                  const data = (uint8Array && uint8Array.buffer && uint8Array.buffer instanceof SharedArrayBuffer)
+                    ? new Uint8Array(uint8Array)
+                    : (uint8Array instanceof Uint8Array ? uint8Array : new Uint8Array(uint8Array));
+
+                  await serialWriter.write(data);
+                  bytesTx += data.length;
+                  txBytes = bytesTx;
+                  updateHudCounters();
+                } catch (err) {
+                  console.error('[SERIAL TX ERROR]', err);
+                  window.__logToScreen('[SERIAL TX ERROR] ' + (err.message || err), '#f87171');
+                }
               }
             };
 
