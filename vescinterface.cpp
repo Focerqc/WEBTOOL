@@ -75,6 +75,10 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mCustomConfigRxDone = false;
     mQmlHwLoaded = false;
     mQmlAppLoaded = false;
+    m_qmlAsyncLoading = false;
+    m_qmlFetchingHw = false;
+    m_qmlTotalLen = -1;
+    m_qmlRetries = 0;
     mPacket = new Packet(this);
     mCommands = new Commands(this);
 
@@ -97,6 +101,16 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mTimer = new QTimer(this);
     mTimer->setInterval(20);
     mTimer->start();
+
+    m_qmlTimeoutTimer = new QTimer(this);
+    m_qmlTimeoutTimer->setSingleShot(true);
+    connect(m_qmlTimeoutTimer, &QTimer::timeout, this, &VescInterface::handleQmlUiTimeout);
+    connect(mCommands, &Commands::qmluiHwRx, this, [this](int len, int ofs, QByteArray data) {
+        handleQmlUiChunk(true, len, ofs, data);
+    });
+    connect(mCommands, &Commands::qmluiAppRx, this, [this](int len, int ofs, QByteArray data) {
+        handleQmlUiChunk(false, len, ofs, data);
+    });
 
     mLastConnType = static_cast<conn_t>(mSettings.value("connection_type", CONN_NONE).toInt());
     mLastTcpServer = mSettings.value("tcp_server", "127.0.0.1").toString();
@@ -356,11 +370,7 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mUseImperialUnits = mSettings.value("useImperialUnits", useImperialByDefault).toBool();
     mKeepScreenOn = mSettings.value("keepScreenOn", true).toBool();
     mUseWakeLock = mSettings.value("useWakeLock", false).toBool();
-#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
-    mLoadQmlUiOnConnect = false;
-#else
     mLoadQmlUiOnConnect = mSettings.value("loadQmlUiOnConnect", true).toBool();
-#endif
     mAllowScreenRotation = mSettings.value("allowScreenRotation", false).toBool();
     mSpeedGaugeUseNegativeValues =  mSettings.value("speedGaugeUseNegativeValues", true).toBool();
     mAskQmlLoad =  mSettings.value("askQmlLoad", true).toBool();
@@ -4178,11 +4188,17 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
             disconnect(conn);
         }
     }
-#endif
 
     if (params.hasQmlApp || params.hasQmlHw) {
         emit qmlLoadDone();
     }
+#else
+    if (mLoadQmlUiOnConnect && (params.hasQmlApp || params.hasQmlHw)) {
+        startQmlUiAsyncLoad(params, confCacheDir);
+    } else if (params.hasQmlApp || params.hasQmlHw) {
+        emit qmlLoadDone();
+    }
+#endif
 
     for (int i = 0;i < mCustomConfigs.size();i++) {
         commands()->customConfigGet(i, false);
@@ -4946,6 +4962,13 @@ void VescInterface::updateFwRx(bool fwRx)
         mCustomConfigRxDone = false;
         mQmlHwLoaded = false;
         mQmlAppLoaded = false;
+        if (m_qmlAsyncLoading) {
+            m_qmlAsyncLoading = false;
+            if (m_qmlTimeoutTimer) {
+                m_qmlTimeoutTimer->stop();
+            }
+            m_qmlBuffer.clear();
+        }
     }
 }
 
@@ -4953,4 +4976,222 @@ void VescInterface::setLastConnectionType(conn_t type)
 {
     mLastConnType = type;
     mSettings.setValue("connection_type", type);
+}
+
+void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir)
+{
+    m_qmlParams = params;
+    m_qmlCacheDir = confCacheDir;
+    m_qmlAsyncLoading = true;
+    m_qmlRetries = 0;
+    m_qmlBuffer.clear();
+    m_qmlTotalLen = -1;
+
+    // Check caches first
+    if (params.hasQmlHw && !confCacheDir.isEmpty()) {
+        QFile f(confCacheDir + "/qml_hw.bin");
+        if (f.exists() && f.open(QIODevice::ReadOnly)) {
+            QByteArray data = f.readAll();
+            f.close();
+            mQmlHw = QString::fromUtf8(qUncompress(data));
+            mQmlHwLoaded = !mQmlHw.isEmpty();
+            if (mQmlHwLoaded) {
+                emitStatusMessage("Got cached qmlui HW", true);
+            }
+        }
+    }
+
+    if (params.hasQmlApp && !confCacheDir.isEmpty()) {
+        QFile f(confCacheDir + "/qml_app.bin");
+        if (f.exists() && f.open(QIODevice::ReadOnly)) {
+            QByteArray data = f.readAll();
+            f.close();
+            mQmlApp = QString::fromUtf8(qUncompress(data));
+            mQmlAppLoaded = !mQmlApp.isEmpty();
+            if (mQmlAppLoaded) {
+                emitStatusMessage("Got cached qmlui App", true);
+            }
+        }
+    }
+
+    bool needHw = params.hasQmlHw && !mQmlHwLoaded;
+    bool needApp = params.hasQmlApp && !mQmlAppLoaded;
+
+    if (!needHw && !needApp) {
+        m_qmlAsyncLoading = false;
+        emit qmlLoadDone();
+        return;
+    }
+
+    if (needHw) {
+        m_qmlFetchingHw = true;
+        emitStatusMessage("Requesting qmlui HW from controller...", true);
+        mCommands->qmlUiHwGet(10, 0);
+        if (m_qmlTimeoutTimer) {
+            m_qmlTimeoutTimer->start(1500);
+        }
+    } else {
+        m_qmlFetchingHw = false;
+        emitStatusMessage("Requesting qmlui App from controller...", true);
+        mCommands->qmlUiAppGet(10, 0);
+        if (m_qmlTimeoutTimer) {
+            m_qmlTimeoutTimer->start(1500);
+        }
+    }
+}
+
+void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QByteArray &data)
+{
+    if (!m_qmlAsyncLoading) {
+        return;
+    }
+
+    if (isHw != m_qmlFetchingHw) {
+        return;
+    }
+
+    if (m_qmlTimeoutTimer) {
+        m_qmlTimeoutTimer->stop();
+    }
+    m_qmlRetries = 0;
+    m_qmlTotalLen = lenQml;
+
+    if (m_qmlTotalLen <= 0) {
+        if (m_qmlFetchingHw && m_qmlParams.hasQmlApp && !mQmlAppLoaded) {
+            m_qmlFetchingHw = false;
+            m_qmlBuffer.clear();
+            m_qmlTotalLen = -1;
+            m_qmlRetries = 0;
+            emitStatusMessage("Requesting qmlui App from controller...", true);
+            mCommands->qmlUiAppGet(10, 0);
+            if (m_qmlTimeoutTimer) {
+                m_qmlTimeoutTimer->start(1500);
+            }
+        } else {
+            m_qmlAsyncLoading = false;
+            m_qmlBuffer.clear();
+            emit qmlLoadDone();
+        }
+        return;
+    }
+
+    if (ofsQml <= m_qmlBuffer.size()) {
+        if (ofsQml < m_qmlBuffer.size()) {
+            m_qmlBuffer.truncate(ofsQml);
+        }
+        m_qmlBuffer.append(data);
+    }
+
+    QString targetName = m_qmlFetchingHw ? "HW QML" : "App QML";
+    emitStatusMessage(QString("Loading %1 (%2 / %3 bytes)...")
+                      .arg(targetName)
+                      .arg(m_qmlBuffer.size())
+                      .arg(m_qmlTotalLen), true);
+
+    if (m_qmlBuffer.size() >= m_qmlTotalLen) {
+        QByteArray uncompressed = qUncompress(m_qmlBuffer);
+        if (!uncompressed.isEmpty()) {
+            if (m_qmlFetchingHw) {
+                mQmlHw = QString::fromUtf8(uncompressed);
+                mQmlHwLoaded = true;
+                emitStatusMessage("Got qmlui HW", true);
+                if (!m_qmlCacheDir.isEmpty()) {
+                    QFile f(m_qmlCacheDir + "/qml_hw.bin");
+                    if (f.open(QIODevice::WriteOnly)) {
+                        f.write(m_qmlBuffer);
+                        f.close();
+                        emitStatusMessage(QString("Cached %1/qml_hw.bin").arg(m_qmlCacheDir), true);
+                    }
+                }
+            } else {
+                mQmlApp = QString::fromUtf8(uncompressed);
+                mQmlAppLoaded = true;
+                emitStatusMessage("Got qmlui App", true);
+                if (!m_qmlCacheDir.isEmpty()) {
+                    QFile f(m_qmlCacheDir + "/qml_app.bin");
+                    if (f.open(QIODevice::WriteOnly)) {
+                        f.write(m_qmlBuffer);
+                        f.close();
+                        emitStatusMessage(QString("Cached %1/qml_app.bin").arg(m_qmlCacheDir), true);
+                    }
+                }
+            }
+        } else {
+            emitStatusMessage(QString("Failed to uncompress %1").arg(targetName), false);
+        }
+
+        if (m_qmlFetchingHw && m_qmlParams.hasQmlApp && !mQmlAppLoaded) {
+            m_qmlFetchingHw = false;
+            m_qmlBuffer.clear();
+            m_qmlTotalLen = -1;
+            m_qmlRetries = 0;
+            emitStatusMessage("Requesting qmlui App from controller...", true);
+            mCommands->qmlUiAppGet(10, 0);
+            if (m_qmlTimeoutTimer) {
+                m_qmlTimeoutTimer->start(1500);
+            }
+        } else {
+            m_qmlAsyncLoading = false;
+            m_qmlBuffer.clear();
+            emit qmlLoadDone();
+        }
+    } else {
+        int dataLeft = m_qmlTotalLen - m_qmlBuffer.size();
+        int chunkSize = dataLeft > 400 ? 400 : dataLeft;
+        if (m_qmlFetchingHw) {
+            mCommands->qmlUiHwGet(chunkSize, m_qmlBuffer.size());
+        } else {
+            mCommands->qmlUiAppGet(chunkSize, m_qmlBuffer.size());
+        }
+        if (m_qmlTimeoutTimer) {
+            m_qmlTimeoutTimer->start(1500);
+        }
+    }
+}
+
+void VescInterface::handleQmlUiTimeout()
+{
+    if (!m_qmlAsyncLoading) {
+        return;
+    }
+
+    m_qmlRetries++;
+    if (m_qmlRetries <= 5) {
+        int currentSize = m_qmlBuffer.size();
+        int dataLeft = (m_qmlTotalLen > 0) ? (m_qmlTotalLen - currentSize) : 10;
+        int chunkSize = dataLeft > 400 ? 400 : (dataLeft <= 0 ? 10 : dataLeft);
+
+        if (m_qmlFetchingHw) {
+            mCommands->qmlUiHwGet(chunkSize, currentSize);
+        } else {
+            mCommands->qmlUiAppGet(chunkSize, currentSize);
+        }
+        if (m_qmlTimeoutTimer) {
+            m_qmlTimeoutTimer->start(1500);
+        }
+    } else {
+        if (m_qmlTimeoutTimer) {
+            m_qmlTimeoutTimer->stop();
+        }
+        QString targetName = m_qmlFetchingHw ? "qmlui HW" : "qmlui App";
+        emitMessageDialog("Get " + targetName,
+                          "Could not read " + targetName + " from hardware (timeout)",
+                          false, false);
+
+        if (m_qmlFetchingHw && m_qmlParams.hasQmlApp && !mQmlAppLoaded) {
+            m_qmlFetchingHw = false;
+            m_qmlBuffer.clear();
+            m_qmlTotalLen = -1;
+            m_qmlRetries = 0;
+            emitStatusMessage("Requesting qmlui App from controller...", true);
+            mCommands->qmlUiAppGet(10, 0);
+            if (m_qmlTimeoutTimer) {
+                m_qmlTimeoutTimer->start(1500);
+            }
+        } else {
+            m_qmlAsyncLoading = false;
+            m_qmlBuffer.clear();
+            emit qmlLoadDone();
+        }
+    }
 }

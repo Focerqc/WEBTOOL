@@ -192,19 +192,6 @@ Item {
                     width: parent.width
 
                     MenuItem {
-                        text: "Fetch package from VESC..."
-                        onTriggered: {
-                            if (!VescIf.isPortConnected()) {
-                                VescIf.emitMessageDialog("Fetch Package", "Not Connected", false, false)
-                                return
-                            }
-                            disableDialog()
-                            dlDialog.title = "Requesting package from VESC..."
-                            mLoader.fetchPackageFromSerial(0)
-                        }
-                    }
-
-                    MenuItem {
                         text: "Install from file..."
                         onTriggered: {
                             if (Utility.requestFilePermission()) {

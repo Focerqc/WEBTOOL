@@ -540,24 +540,6 @@ Item {
                                     }
                                 }
                             }
-
-                            Button {
-                                text: "Read from VESC"
-                                icon.source: "qrc" + Utility.getThemePath() + "icons/Refresh-96.png"
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Read installed package directly from the connected VESC controller"
-                                enabled: !downloadInProgress
-                                onClicked: {
-                                    if (!VescIf.isPortConnected()) {
-                                        VescIf.emitMessageDialog("Read Package", "Not Connected", false, false)
-                                        return
-                                    }
-                                    downloadInProgress = true
-                                    dlText = "Reading package from VESC..."
-                                    dlValue = 0
-                                    mLoader.fetchPackageFromSerial(0)
-                                }
-                            }
                         }
                     }
 
@@ -840,22 +822,6 @@ Item {
                             VescIf.emitStatusMessage("Downloads Failed", false)
                         }
                     })
-                }
-            }
-
-            Button {
-                text: "Fetch from VESC"
-                icon.source: "qrc" + Utility.getThemePath() + "icons/Download-96.png"
-                enabled: !downloadInProgress
-                onClicked: {
-                    if (!VescIf.isPortConnected()) {
-                        VescIf.emitMessageDialog("Fetch Package", "Not Connected", false, false)
-                        return
-                    }
-                    downloadInProgress = true
-                    dlText = "Fetching package from VESC..."
-                    dlValue = 0
-                    mLoader.fetchPackageFromSerial(0)
                 }
             }
 

@@ -375,6 +375,9 @@ private slots:
     void mcconfUpdated();
     void ackReceived(QString ackType);
     void customConfigRx(int confId, QByteArray data);
+    void startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir);
+    void handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QByteArray &data);
+    void handleQmlUiTimeout();
 
 private:
     typedef enum {
@@ -411,6 +414,15 @@ private:
     QString mQmlHw;
     bool mQmlAppLoaded;
     QString mQmlApp;
+
+    bool m_qmlAsyncLoading;
+    bool m_qmlFetchingHw;
+    QByteArray m_qmlBuffer;
+    int m_qmlTotalLen;
+    int m_qmlRetries;
+    QString m_qmlCacheDir;
+    FW_RX_PARAMS m_qmlParams;
+    QTimer *m_qmlTimeoutTimer;
 
     QTimer *mTimer;
     Packet *mPacket;
