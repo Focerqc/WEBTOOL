@@ -1,6 +1,8 @@
 [build]
   publish = "build-wasm"
+  functions = "netlify/functions"
 
-[[edge_functions]]
-  path = "/api/proxy"
-  function = "proxy"
+[[redirects]]
+  from = "/api/proxy"
+  to = "/.netlify/functions/proxy"
+  status = 200

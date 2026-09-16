@@ -736,6 +736,8 @@ jobs:
           echo "  Access-Control-Allow-Headers: *" >> build-wasm/_headers
           echo "  Cross-Origin-Resource-Policy: cross-origin" >> build-wasm/_headers
 
+          echo "/api/proxy /.netlify/functions/proxy 200" > build-wasm/_redirects
+
           cp -r netlify build-wasm/ 2>/dev/null || true
           cp netlify.toml build-wasm/ 2>/dev/null || true
 
@@ -743,6 +745,8 @@ jobs:
         uses: nwtgck/actions-netlify@v3.0
         with:
           publish-dir: './build-wasm'
+          functions-dir: './netlify/functions'
+          netlify-config-path: './netlify.toml'
           production-branch: WEB-BRANCH-TEST-1
           github-token: ${{ secrets.GITHUB_TOKEN }}
           deploy-message: "Deploy VESC Tool WASM"
