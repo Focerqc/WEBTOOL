@@ -1041,6 +1041,15 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
 endif()
 
 # ---------------------------------------------------------------------------
+# WebAssembly / Emscripten-specific (preserve C++ function symbols in stack traces)
+# ---------------------------------------------------------------------------
+if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
+    target_link_options(${APP_TARGET} PRIVATE
+        --profiling-funcs
+    )
+endif()
+
+# ---------------------------------------------------------------------------
 # macOS-specific
 # ---------------------------------------------------------------------------
 if(APPLE AND NOT IOS)

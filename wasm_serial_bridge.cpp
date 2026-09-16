@@ -29,6 +29,9 @@ EM_JS(void, register_wasm_serial_bridge_js, (), {
         if (!uint8Array || !uint8Array.length) return;
         var len = uint8Array.length;
         var ptr = (typeof Module !== 'undefined' && Module._malloc) ? Module._malloc(len) : _malloc(len);
+        if (ptr % 8 !== 0) {
+            console.error('[WASM SERIAL] Unaligned malloc pointer returned:', ptr, 'len:', len);
+        }
         HEAPU8.set(uint8Array, ptr);
         if (typeof Module !== 'undefined' && Module._wasm_serial_rx) {
             Module._wasm_serial_rx(ptr, len);
@@ -84,12 +87,10 @@ WASM_EXPORT void wasm_serial_rx(const uint8_t* data, int len) {
     }
 
     QByteArray chunk(reinterpret_cast<const char*>(data), len);
+    qDebug() << "[BRIDGE RX]" << chunk.size() << "bytes queued to VescInterface";
 
     // Thread-safe dispatch to the Qt event loop (handles both single-thread and pthread worker)
     QMetaObject::invokeMethod(vi, [vi, chunk]() {
-        if (!vi->isPortConnected()) {
-            vi->connectSerial("WebSerial", 115200);
-        }
         vi->processRawRx(chunk);
     }, Qt::QueuedConnection);
 }

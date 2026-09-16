@@ -49,6 +49,7 @@ jobs:
         run: |
           /home/runner/Qt/6.11.0/wasm_multithread/bin/qt-cmake -B build-wasm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="--profiling-funcs" \
             -DQT_HOST_PATH=/home/runner/Qt/6.11.0/gcc_64 \
             -DQT_NO_EMCC_VERSION_CHECK=ON
 
@@ -134,8 +135,24 @@ jobs:
           (function() {
             const logContainer = document.getElementById('vesc-diagnostics-logs');
 
+            function isFilteredMessage(text) {
+              if (typeof text !== 'string') return false;
+              return text.includes('Failed to link shader program') ||
+                     text.includes('Failed to build graphics pipeline state') ||
+                     text.includes('res//primitives/Cube.mesh');
+            }
+
+            function bytesToHex(arr) {
+              if (!arr || !arr.length) return '';
+              const hex = [];
+              for (let i = 0; i < arr.length; i++) {
+                hex.push(arr[i].toString(16).padStart(2, '0'));
+              }
+              return hex.join(' ');
+            }
+
             window.__logToScreen = function(text, color) {
-              if (!logContainer) return;
+              if (!logContainer || isFilteredMessage(text)) return;
               const item = document.createElement('div');
               item.style.padding = '1px 0';
               item.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
@@ -188,43 +205,66 @@ jobs:
             const origError = console.error;
 
             console.log = function(...args) {
-              try {
-                window.__logToScreen(args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
-              } catch (_) {}
+              const joined = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+              if (!isFilteredMessage(joined)) {
+                try {
+                  window.__logToScreen(joined);
+                } catch (_) {}
+              }
               origLog.apply(console, args);
             };
 
             console.warn = function(...args) {
-              try {
-                window.__logToScreen('[WARN] ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '), '#facc15');
-              } catch (_) {}
+              const joined = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+              if (!isFilteredMessage(joined)) {
+                try {
+                  window.__logToScreen('[WARN] ' + joined, '#facc15');
+                } catch (_) {}
+              }
               origWarn.apply(console, args);
             };
 
             console.error = function(...args) {
-              try {
-                window.__logToScreen('[ERROR] ' + args.map(a => (a instanceof Error ? (a.stack || a.message) : (typeof a === 'object' ? JSON.stringify(a) : String(a)))).join(' '), '#f87171');
-              } catch (_) {}
+              const joined = args.map(a => (a instanceof Error ? (a.stack || a.message) : (typeof a === 'object' ? JSON.stringify(a) : String(a)))).join(' ');
+              if (!isFilteredMessage(joined)) {
+                try {
+                  window.__logToScreen('[ERROR] ' + joined, '#f87171');
+                } catch (_) {}
+              }
               origError.apply(console, args);
             };
 
             window.onerror = function(msg, url, line, col, error) {
               const errText = error ? (error.stack || error.message) : (msg + ' (' + url + ':' + line + ':' + col + ')');
-              window.__logToScreen('[UNCAUGHT ERROR] ' + errText, '#ef4444');
+              if (!isFilteredMessage(errText)) {
+                window.__logToScreen('[UNCAUGHT ERROR] ' + errText, '#ef4444');
+              }
               return false;
             };
 
             window.onunhandledrejection = function(event) {
               const reason = event.reason ? (event.reason.stack || event.reason.message || event.reason) : 'Unknown Promise Rejection';
-              window.__logToScreen('[UNHANDLED REJECTION] ' + reason, '#ef4444');
+              if (!isFilteredMessage(String(reason))) {
+                window.__logToScreen('[UNHANDLED REJECTION] ' + reason, '#ef4444');
+              }
             };
 
             // Module hooks
             window.Module = window.Module || {};
             const origPrint = window.Module.print || console.log;
             const origPrintErr = window.Module.printErr || console.error;
-            window.Module.print = function(text) { window.__logToScreen('[STDOUT] ' + text); origPrint(text); };
-            window.Module.printErr = function(text) { window.__logToScreen('[STDERR] ' + text, 'red'); origPrintErr(text); };
+            window.Module.print = function(text) {
+              if (!isFilteredMessage(text)) {
+                window.__logToScreen('[STDOUT] ' + text);
+              }
+              origPrint(text);
+            };
+            window.Module.printErr = function(text) {
+              if (!isFilteredMessage(text)) {
+                window.__logToScreen('[STDERR] ' + text, 'red');
+              }
+              origPrintErr(text);
+            };
 
             // 3. Web Serial API Integration
             let serialPort = null;
@@ -327,11 +367,18 @@ jobs:
                       bytesRx += value.length;
                       updateSerialHud();
 
+                      const hexStr = bytesToHex(value);
+                      window.__logToScreen(`[SERIAL RX] (${value.length} bytes): ${hexStr}`, '#a5f3fc');
+
                       // Feed raw bytes into wasm_serial_rx via EM_JS bridge
                       if (window.__wasm_serial_feed_rx) {
                         window.__wasm_serial_feed_rx(value);
                       } else if (window.Module && typeof window.Module._wasm_serial_rx === 'function') {
                         const ptr = window.Module._malloc(value.length);
+                        if (ptr % 8 !== 0) {
+                          console.error('[SERIAL ERROR] Unaligned pointer returned by Module._malloc:', ptr, 'len:', value.length);
+                          window.__logToScreen(`[SERIAL ERROR] Unaligned pointer returned by Module._malloc: ${ptr} (alignment: ${ptr % 8})`, '#f87171');
+                        }
                         window.Module.HEAPU8.set(value, ptr);
                         window.Module._wasm_serial_rx(ptr, value.length);
                         window.Module._free(ptr);
@@ -403,6 +450,9 @@ jobs:
                   const data = (uint8Array && uint8Array.buffer && uint8Array.buffer instanceof SharedArrayBuffer)
                     ? new Uint8Array(uint8Array)
                     : (uint8Array instanceof Uint8Array ? uint8Array : new Uint8Array(uint8Array));
+
+                  const hexStr = bytesToHex(data);
+                  window.__logToScreen(`[SERIAL TX] (${data.length} bytes): ${hexStr}`, '#86efac');
 
                   await serialWriter.write(data);
                   bytesTx += data.length;
