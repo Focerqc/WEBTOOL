@@ -1,8 +1,9 @@
 name: Build and Deploy to Netlify
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ "WEB-BRANCH-TEST-1" ]
+    branches: [ "main", "master" ]
 
 jobs:
   build-and-deploy:
@@ -747,7 +748,7 @@ jobs:
           publish-dir: './build-wasm'
           functions-dir: './netlify/functions'
           netlify-config-path: './netlify.toml'
-          production-branch: WEB-BRANCH-TEST-1
+          production-branch: main
           github-token: ${{ secrets.GITHUB_TOKEN }}
           deploy-message: "Deploy VESC Tool WASM"
           enable-pull-request-comment: false
