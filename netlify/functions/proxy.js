@@ -1,4 +1,4 @@
-export const handler = async (event) => {
+exports.handler = async (event) => {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -6,7 +6,6 @@ export const handler = async (event) => {
     "Cross-Origin-Resource-Policy": "cross-origin",
   };
 
-  // Handle CORS preflight
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -15,7 +14,7 @@ export const handler = async (event) => {
     };
   }
 
-  const targetUrl = event.queryStringParameters?.url;
+  const targetUrl = event.queryStringParameters && event.queryStringParameters.url;
   if (!targetUrl) {
     return {
       statusCode: 400,
@@ -33,7 +32,6 @@ export const handler = async (event) => {
     const arrayBuffer = await upstream.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Forward upstream headers and add CORS/CORP
     const responseHeaders = { ...corsHeaders };
     const copyHeaders = ["content-type", "content-length", "etag", "last-modified", "content-disposition"];
     for (const h of copyHeaders) {
@@ -51,7 +49,7 @@ export const handler = async (event) => {
     return {
       statusCode: 502,
       headers: corsHeaders,
-      body: `Proxy error: ${err.message}`,
+      body: "Proxy error: " + err.message,
     };
   }
 };
