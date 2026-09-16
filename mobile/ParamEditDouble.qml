@@ -28,6 +28,8 @@ Item {
     property string paramName: ""
     property ConfigParams params: null
     height: 140
+    implicitHeight: height
+    Layout.preferredHeight: height
     Layout.fillWidth: true
     property real maxVal: 1.0
     property bool createReady: false

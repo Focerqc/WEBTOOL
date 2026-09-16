@@ -28,6 +28,8 @@ Item {
     property string paramName: ""
     property ConfigParams params: null
     height: 240
+    implicitHeight: height
+    Layout.preferredHeight: height
     Layout.fillWidth: true
     property real maxVal: 1.0
     property bool createReady: false
@@ -72,6 +74,7 @@ Item {
             if (visibleCount < 0.0) visibleCount = 0.0
 
             height = 120 + visibleCount * 40
+            implicitHeight = height
             Layout.preferredHeight = height
 
             if (params.getParamTransmittable(paramName)) {

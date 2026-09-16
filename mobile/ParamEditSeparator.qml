@@ -25,6 +25,8 @@ import Vedder.vesc
 Item {
     Layout.fillWidth: true
     height: 25
+    implicitHeight: height
+    Layout.preferredHeight: height
 
     property string sepName: ""
 

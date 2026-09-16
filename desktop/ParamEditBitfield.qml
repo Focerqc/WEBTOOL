@@ -42,9 +42,10 @@ RowLayout {
             CheckBox {
                 id: bitCb
                 property int bitIndex: index
-                property string bitName: ""
+                property string bitName: (params && paramName !== "" && index < params.getParamEnumNames(paramName).length) ? params.getParamEnumNames(paramName)[index] : ""
                 visible: bitName !== "" && bitName.toLowerCase() !== "unused"
                 text: bitName
+                checked: (params && paramName !== "") ? ((params.getParamInt(paramName) & (1 << index)) !== 0) : false
                 font.pointSize: 11
 
                 onToggled: {

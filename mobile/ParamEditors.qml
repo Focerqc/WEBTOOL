@@ -34,22 +34,22 @@ Item {
 
         if (conf.hasParam(name)) {
             if (conf.isParamDouble(name)) {
-                var component = Qt.createComponent("ParamEditDouble.qml");
+                var component = Qt.createComponent("qrc:/mobile/ParamEditDouble.qml");
                 return component.createObject(parent, {"params": conf, "paramName": name});
             } else if (conf.isParamInt(name)) {
-                var component2 = Qt.createComponent("ParamEditInt.qml");
+                var component2 = Qt.createComponent("qrc:/mobile/ParamEditInt.qml");
                 return component2.createObject(parent, {"params": conf, "paramName": name});
             } else if (conf.isParamEnum(name)) {
-                var component3 = Qt.createComponent("ParamEditEnum.qml");
+                var component3 = Qt.createComponent("qrc:/mobile/ParamEditEnum.qml");
                 return component3.createObject(parent, {"params": conf, "paramName": name});
             } else if (conf.isParamBool(name)) {
-                var component4 = Qt.createComponent("ParamEditBool.qml");
+                var component4 = Qt.createComponent("qrc:/mobile/ParamEditBool.qml");
                 return component4.createObject(parent, {"params": conf, "paramName": name});
             } else if (conf.isParamQString(name)) {
-                var component5 = Qt.createComponent("ParamEditString.qml");
+                var component5 = Qt.createComponent("qrc:/mobile/ParamEditString.qml");
                 return component5.createObject(parent, {"params": conf, "paramName": name});
             } else if (conf.isParamBitfield(name)) {
-                var component6 = Qt.createComponent("ParamEditBitfield.qml");
+                var component6 = Qt.createComponent("qrc:/mobile/ParamEditBitfield.qml");
                 return component6.createObject(parent, {"params": conf, "paramName": name});
             }
         } else {
@@ -72,7 +72,7 @@ Item {
     }
 
     function createSeparator(parent, text) {
-        var component = Qt.createComponent("ParamEditSeparator.qml");
+        var component = Qt.createComponent("qrc:/mobile/ParamEditSeparator.qml");
         return component.createObject(parent, {"sepName": text});
     }
 

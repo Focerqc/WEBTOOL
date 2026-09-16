@@ -23,6 +23,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs as Dl
 
 import Vedder.vesc
+import "qrc:/mobile" as MobileUi
 
 Item {
     id: appPageItem
@@ -30,7 +31,7 @@ Item {
     property bool isHorizontal: width > height
     property int confInd: 0
 
-    ParamEditors {
+    MobileUi.ParamEditors {
         id: editors
     }
 
