@@ -18,6 +18,7 @@
     */
 
 #include "osmclient.h"
+#include "vesctasks.h"
 #include <QDebug>
 #include <QPainter>
 
@@ -234,7 +235,7 @@ int OsmClient::downloadTile(int zoom, int x, int y)
                 // Only add if this tile is not already downloading
                 QString path = mTileServer + "/" + QString::number(zoom) +
                         "/" + QString::number(x) + "/" + QString::number(y) + ".png";
-                QNetworkRequest request(path);
+                QNetworkRequest request(toProxyUrl(QUrl(path)));
                 request.setRawHeader("User-Agent", "Firefox");
                 mWebCtrl.get(request);
                 mDownloadingTiles.insert(key, true);

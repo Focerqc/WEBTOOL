@@ -181,6 +181,8 @@ public:
     static QPixmap getIcon(QString path);
 
     Q_INVOKABLE static bool downloadUrlEventloop(QString path, QString dest);
+    Q_INVOKABLE static QUrl toProxyUrl(const QUrl &url);
+    Q_INVOKABLE static QString toProxyUrl(const QString &url);
 
     Q_INVOKABLE static QString md2html(QString md);
 

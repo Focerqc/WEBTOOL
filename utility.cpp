@@ -2461,6 +2461,16 @@ QPixmap Utility::getIcon(QString path)
     return pm;
 }
 
+QUrl Utility::toProxyUrl(const QUrl &url)
+{
+    return ::toProxyUrl(url);
+}
+
+QString Utility::toProxyUrl(const QString &url)
+{
+    return ::toProxyUrl(url);
+}
+
 bool Utility::downloadUrlEventloop(QString path, QString dest)
 {
     bool res = false;

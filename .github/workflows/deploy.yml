@@ -730,6 +730,14 @@ jobs:
           echo "/vesc_tool_7.00.wasm" >> build-wasm/_headers
           echo "  Content-Type: application/wasm" >> build-wasm/_headers
           echo "  Cache-Control: public, max-age=31536000, immutable" >> build-wasm/_headers
+          echo "/api/proxy" >> build-wasm/_headers
+          echo "  Access-Control-Allow-Origin: *" >> build-wasm/_headers
+          echo "  Access-Control-Allow-Methods: GET, HEAD, OPTIONS" >> build-wasm/_headers
+          echo "  Access-Control-Allow-Headers: *" >> build-wasm/_headers
+          echo "  Cross-Origin-Resource-Policy: cross-origin" >> build-wasm/_headers
+
+          cp -r netlify build-wasm/ 2>/dev/null || true
+          cp netlify.toml build-wasm/ 2>/dev/null || true
 
       - name: Deploy to Netlify
         uses: nwtgck/actions-netlify@v3.0

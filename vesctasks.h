@@ -27,6 +27,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QUrl>
+#include <QUrlQuery>
 #ifndef Q_OS_WASM
 #include <QProcess>
 #endif
@@ -38,6 +40,47 @@
 #include <QtTaskTree/QTaskTree>
 
 using namespace QtTaskTree;
+
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+inline QUrl toProxyUrl(const QUrl &url)
+{
+    if (!url.isValid()) {
+        return url;
+    }
+    QString urlStr = url.toString();
+    if ((urlStr.startsWith("http://", Qt::CaseInsensitive) || urlStr.startsWith("https://", Qt::CaseInsensitive)) &&
+        !urlStr.contains("/api/proxy") && !url.path().startsWith("/api/proxy")) {
+        QUrl proxyUrl("/api/proxy");
+        QUrlQuery query;
+        query.addQueryItem("url", urlStr);
+        proxyUrl.setQuery(query);
+        return proxyUrl;
+    }
+    return url;
+}
+
+inline QString toProxyUrl(const QString &urlStr)
+{
+    if (urlStr.isEmpty()) {
+        return urlStr;
+    }
+    if ((urlStr.startsWith("http://", Qt::CaseInsensitive) || urlStr.startsWith("https://", Qt::CaseInsensitive)) &&
+        !urlStr.contains("/api/proxy")) {
+        return toProxyUrl(QUrl(urlStr)).toString();
+    }
+    return urlStr;
+}
+#else
+inline QUrl toProxyUrl(const QUrl &url)
+{
+    return url;
+}
+
+inline QString toProxyUrl(const QString &urlStr)
+{
+    return urlStr;
+}
+#endif
 
 // ============================================================================
 // SignalWaitTask — waits for an arbitrary signal with a timeout.
@@ -159,7 +202,7 @@ public:
         : QObject(parent)
     {}
 
-    void setUrl(const QUrl &url) { m_url = url; }
+    void setUrl(const QUrl &url) { m_url = toProxyUrl(url); }
     void setProgressCallback(std::function<void(qint64, qint64)> cb) { m_progressCb = std::move(cb); }
 
     /// If set, incoming data is incrementally written to this device instead of
@@ -170,7 +213,7 @@ public:
     QNetworkReply::NetworkError error() const { return m_error; }
 
     void start() {
-        m_reply = m_manager.get(QNetworkRequest(m_url));
+        m_reply = m_manager.get(QNetworkRequest(toProxyUrl(m_url)));
 
         connect(m_reply, &QNetworkReply::downloadProgress, this,
                 [this](qint64 bytesReceived, qint64 bytesTotal) {
