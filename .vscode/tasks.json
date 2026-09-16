@@ -2,6 +2,25 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build WASM (ninja)",
+      "type": "shell",
+      "command": "ninja",
+      "options": {
+        "cwd": "${workspaceFolder}/build-wasm"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": false,
+        "clear": true
+      }
+    },
+    {
       "label": "Start Local Server (server.py)",
       "type": "shell",
       "command": "python",

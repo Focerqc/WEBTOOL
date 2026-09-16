@@ -2,7 +2,21 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Start Local Server (server.py)",
+      "name": "Build & Run Local Server (Ninja + Python)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.py",
+      "args": ["-p", "8080"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "Build WASM (ninja)",
+      "serverReadyAction": {
+        "pattern": "Direct App URL\\s+:\\s+(https?://localhost:\\d+/[^\\s]+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "Start Local Server (Instant, No Build)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/server.py",
