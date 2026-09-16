@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Patches the Qt WebAssembly HTML output with:
-- Centered smartphone mobile viewport (9:19.5 modern & 9:16 classic) with authentic device frame
-- Interactive viewport switcher (Modern 9:19.5 -> Classic 9:16 -> Desktop 100vw)
+- Clean smartphone mobile viewport (480px centered, borderless, unrounded)
+- Instant toggle between Mobile (480px) and Desktop (100vw)
 - Bottom diagnostics HUD bar with WebSerial USB Connect button
 - Real-time telemetry, baud rate, and I/O byte counters
 - Side drawer diagnostics & system log viewer
@@ -28,72 +28,47 @@ def patch_html(build_dir="build-wasm"):
     with open(html_src, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Clean existing injections if previously patched
+    # Clean any prior injected HUD and styles
     content = re.sub(r'<!-- VESC Tool WASM Diagnostics Bottom Bar -->.*?window\.__logToScreen\(\'Diagnostics & Web Serial overlay initialized\.\'\);\s*\}\)\(\);\s*</script>', '', content, flags=re.DOTALL)
     content = re.sub(r'<div id="app-wrapper">\s*<div id="qt-container"[^>]*></div>\s*</div>', '<div id="screen"></div>', content)
     content = re.sub(r'<div id="qt-container"[^>]*></div>', '<div id="screen"></div>', content)
 
-    # 1. Viewport Styling for Mobile (9:19.5 and 9:16) and Desktop (100vw)
+    # 1. Clean Viewport Styling for Mobile (480px) and Desktop (100vw) - NO BORDERS, NO ROUNDED CORNERS
     viewport_css = """<style>
     body {
       margin: 0;
       padding: 0;
-      overflow: hidden;
-      background-color: #0b0f19 !important;
+      overflow-x: hidden;
+      background-color: #121212 !important;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
       align-items: center;
       height: 100vh;
-      width: 100vw;
+      overflow-y: hidden;
     }
-    #app-wrapper {
-      flex: 1;
+    #qt-container.viewport-mobile {
+      max-width: 480px;
       width: 100%;
       height: calc(100vh - 42px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      position: relative;
-      background: radial-gradient(circle at center, #1e293b 0%, #0f172a 70%, #020617 100%);
-    }
-    /* Modern Phone Preset (9:19.5 - iPhone 14/15/16 & Galaxy S23/S24 standard) */
-    #qt-container.viewport-mobile {
-      height: min(calc(100vh - 64px), 844px);
-      aspect-ratio: 9 / 19.5;
-      max-width: calc(100vw - 32px);
+      margin: 0 auto;
       position: relative;
       overflow: hidden;
-      border-radius: 38px;
-      border: 10px solid #1e293b;
-      box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1);
-      background-color: #000000;
-      box-sizing: content-box;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: 0 0 35px rgba(0,0,0,0.8);
+      background-color: #202020;
     }
-    /* Classic Phone Preset (9:16 - 1080x1920 standard) */
-    #qt-container.viewport-mobile-16-9 {
-      height: min(calc(100vh - 64px), 760px);
-      aspect-ratio: 9 / 16;
-      max-width: calc(100vw - 32px);
-      position: relative;
-      overflow: hidden;
-      border-radius: 28px;
-      border: 10px solid #1e293b;
-      box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1);
-      background-color: #000000;
-      box-sizing: content-box;
-    }
-    /* Full Desktop Viewport */
     #qt-container.viewport-desktop {
       max-width: 100vw !important;
       width: 100vw !important;
       height: calc(100vh - 42px) !important;
       margin: 0 !important;
-      border-radius: 0 !important;
       border: none !important;
+      border-radius: 0 !important;
+      position: relative;
       box-shadow: none !important;
-      background-color: #121212 !important;
+      background-color: #202020;
     }
     #qtcanvas {
       width: 100% !important;
@@ -125,10 +100,10 @@ def patch_html(build_dir="build-wasm"):
     </style>"""
     content = re.sub(r'<style>.*?</style>', viewport_css, content, flags=re.DOTALL)
 
-    # Replace #screen container with #app-wrapper > #qt-container (defaulting to viewport-mobile)
+    # Replace #screen container with #qt-container (defaulting to viewport-mobile)
     content = content.replace(
         '<div id="screen"></div>',
-        '<div id="app-wrapper"><div id="qt-container" class="viewport-mobile"></div></div>'
+        '<div id="qt-container" class="viewport-mobile"></div>'
     )
     content = content.replace(
         "const screen = document.querySelector('#screen');",
@@ -185,7 +160,7 @@ def patch_html(build_dir="build-wasm"):
         <button id="btn-webserial-connect" type="button" onclick="window.toggleWebSerial()" style="position:relative;z-index:100002;pointer-events:auto;background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
           🔌 Connect USB (Web Serial)
         </button>
-        <button id="btn-viewport-toggle" type="button" onclick="window.toggleViewportMode()" style="position:relative;z-index:100002;pointer-events:auto;background:#334155;border:1px solid #475569;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📱 View: Mobile (9:19.5)</button>
+        <button id="btn-viewport-toggle" type="button" onclick="window.toggleViewportMode()" style="position:relative;z-index:100002;pointer-events:auto;background:#334155;border:1px solid #475569;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📱 View: Mobile</button>
         <span style="white-space:nowrap;">Serial: <span id="diag-val-serial-status" style="color:#94a3b8;">Disconnected</span></span>
         <span style="white-space:nowrap;">Baud: <span id="diag-val-serial-baud" style="color:#a5f3fc;">--</span></span>
         <span style="white-space:nowrap;">I/O: <span id="diag-val-serial-io" style="color:#cbd5e1;">RX: 0 B / TX: 0 B</span></span>
@@ -607,48 +582,33 @@ def patch_html(build_dir="build-wasm"):
         });
       }
 
-      // Viewport mode cycle: Modern (9:19.5) -> Classic (9:16) -> Desktop (100vw)
+      // Viewport mode toggle function and initial mode detection
       window.toggleViewportMode = function() {
         const container = document.getElementById('qt-container');
         const btn = document.getElementById('btn-viewport-toggle');
         if (!container) return;
 
-        if (container.classList.contains('viewport-mobile')) {
-          // Switch to 16:9 Classic
+        const isMobile = container.classList.contains('viewport-mobile');
+        if (isMobile) {
           container.classList.remove('viewport-mobile');
-          container.classList.add('viewport-mobile-16-9');
-          if (btn) btn.innerHTML = '📱 View: Classic (9:16)';
-          try {
-            const url = new URL(window.location);
-            url.searchParams.set('mode', '16-9');
-            url.searchParams.delete('desktop');
-            window.history.replaceState({}, '', url);
-          } catch (_) {}
-          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Classic Smartphone Viewport (9:16).');
-        } else if (container.classList.contains('viewport-mobile-16-9')) {
-          // Switch to Full Desktop
-          container.classList.remove('viewport-mobile-16-9');
           container.classList.add('viewport-desktop');
-          if (btn) btn.innerHTML = '🖥️ View: Desktop (100vw)';
+          if (btn) btn.innerHTML = '🖥️ View: Desktop';
           try {
             const url = new URL(window.location);
             url.searchParams.set('desktop', '1');
-            url.searchParams.delete('mode');
             window.history.replaceState({}, '', url);
           } catch (_) {}
-          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Full Desktop Viewport (100vw).');
+          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Desktop Viewport (100vw).');
         } else {
-          // Switch to 9:19.5 Modern
           container.classList.remove('viewport-desktop');
           container.classList.add('viewport-mobile');
-          if (btn) btn.innerHTML = '📱 View: Modern (9:19.5)';
+          if (btn) btn.innerHTML = '📱 View: Mobile';
           try {
             const url = new URL(window.location);
             url.searchParams.delete('desktop');
-            url.searchParams.delete('mode');
             window.history.replaceState({}, '', url);
           } catch (_) {}
-          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Modern Smartphone Viewport (9:19.5).');
+          if (window.__logToScreen) window.__logToScreen('[VIEWPORT] Switched to Mobile Viewport (480px).');
         }
 
         const canvas = container.querySelector('canvas') || document.querySelector('canvas');
@@ -661,12 +621,11 @@ def patch_html(build_dir="build-wasm"):
         });
       };
 
-      // Check initial viewport mode based on URL (?desktop=1 or ?mode=16-9)
+      // Check initial viewport mode based on URL (?desktop=1)
       (function initViewport() {
         try {
           const params = new URLSearchParams(window.location.search);
           const isDesktop = params.get('desktop') === '1';
-          const is169 = params.get('mode') === '16-9';
           const container = document.getElementById('qt-container');
           const btn = document.getElementById('btn-viewport-toggle');
           if (isDesktop) {
@@ -674,17 +633,11 @@ def patch_html(build_dir="build-wasm"):
               container.classList.remove('viewport-mobile');
               container.classList.add('viewport-desktop');
             }
-            if (btn) btn.innerHTML = '🖥️ View: Desktop (100vw)';
-          } else if (is169) {
-            if (container) {
-              container.classList.remove('viewport-mobile');
-              container.classList.add('viewport-mobile-16-9');
-            }
-            if (btn) btn.innerHTML = '📱 View: Classic (9:16)';
+            if (btn) btn.innerHTML = '🖥️ View: Desktop';
+            [10, 50, 150, 300].forEach(delay => {
+              setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
+            });
           }
-          [10, 50, 150, 300].forEach(delay => {
-            setTimeout(() => window.dispatchEvent(new Event('resize')), delay);
-          });
         } catch (_) {}
       })();
 
