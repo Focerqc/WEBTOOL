@@ -158,10 +158,14 @@ def patch_html(build_dir="build-wasm"):
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:visible;height:100%;position:relative;z-index:100000;pointer-events:auto;">
         <span style="color:#38bdf8;font-weight:bold;white-space:nowrap;">🛠️ VESC Tool WASM</span>
         <button id="btn-webserial-connect" type="button" onclick="window.toggleWebSerial()" style="position:relative;z-index:100002;pointer-events:auto;background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
-          🔌 Connect USB (Web Serial)
+          🔌 Connect USB
+        </button>
+        <button id="btn-webble-connect" type="button" onclick="window.toggleWebBle()" style="position:relative;z-index:100002;pointer-events:auto;background:#059669;border:1px solid #047857;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+          📡 Connect BLE
         </button>
         <button id="btn-viewport-toggle" type="button" onclick="window.toggleViewportMode()" style="position:relative;z-index:100002;pointer-events:auto;background:#334155;border:1px solid #475569;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📱 View: Mobile</button>
         <span style="white-space:nowrap;">Serial: <span id="diag-val-serial-status" style="color:#94a3b8;">Disconnected</span></span>
+        <span style="white-space:nowrap;">BLE: <span id="diag-val-ble-status" style="color:#94a3b8;">Disconnected</span></span>
         <span style="white-space:nowrap;">Baud: <span id="diag-val-serial-baud" style="color:#a5f3fc;">--</span></span>
         <span style="white-space:nowrap;">I/O: <span id="diag-val-serial-io" style="color:#cbd5e1;">RX: 0 B / TX: 0 B</span></span>
         <span style="white-space:nowrap;">COI: <span id="diag-val-coi">checking...</span></span>
@@ -580,6 +584,71 @@ def patch_html(build_dir="build-wasm"):
         window.__logToScreen('[SERIAL] Disconnected.');
       }
 
+      // Web Bluetooth Controls
+      window.updateBleHud = function() {
+        const btn = document.getElementById('btn-webble-connect');
+        const statusEl = document.getElementById('diag-val-ble-status');
+        const bridge = window._webBleBridge;
+        const isConn = bridge && bridge.isConnected;
+        if (statusEl) {
+          if (isConn) {
+            statusEl.innerHTML = '<span style="color:#4ade80;font-weight:bold;">' + (bridge.activeDevice?.name || 'Connected') + '</span>';
+          } else if (bridge && bridge.isConnecting) {
+            statusEl.innerHTML = '<span style="color:#fde047;">Connecting...</span>';
+          } else {
+            statusEl.innerHTML = '<span style="color:#94a3b8;">Disconnected</span>';
+          }
+        }
+        if (btn) {
+          if (isConn) {
+            btn.textContent = '📡 Disconnect BLE';
+            btn.style.background = '#dc2626';
+            btn.style.borderColor = '#b91c1c';
+          } else {
+            btn.textContent = '📡 Connect BLE';
+            btn.style.background = '#059669';
+            btn.style.borderColor = '#047857';
+          }
+        }
+      };
+
+      window.toggleWebBle = async function() {
+        const bridge = window._webBleBridge;
+        if (bridge && bridge.isConnected) {
+          if (typeof Module !== 'undefined' && Module._webble_disconnect) {
+            Module._webble_disconnect();
+          } else if (bridge.gattServer) {
+            bridge.gattServer.disconnect();
+          }
+        } else {
+          if (!('bluetooth' in navigator)) {
+            window.__logToScreen('[BLE ERROR] Web Bluetooth API is not supported in this browser. Please use Chrome or Edge.', '#f87171');
+            alert('Web Bluetooth API is not supported in this browser.\\nPlease use Google Chrome, Microsoft Edge, or a Chromium-based browser.');
+            return;
+          }
+          if (typeof Module !== 'undefined' && Module._webble_request_device) {
+            Module._webble_request_device();
+          } else if (window._webBleBridge) {
+            try {
+              window.__logToScreen('[BLE] Requesting Bluetooth device via browser dialog...');
+              const dev = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true,
+                optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
+              });
+              window._webBleBridge.devices[dev.id] = dev;
+              window._webBleBridge.activeDevice = dev;
+              window._webBleBridge.dispatchScan(dev.name || 'VESC BLE', dev.id);
+              if (typeof Module !== 'undefined' && Module._webble_connect) {
+                Module._webble_connect(0);
+              }
+            } catch(e) {
+              console.warn("BLE requestDevice error:", e);
+              window.__logToScreen('[BLE] ' + (e.message || e), '#facc15');
+            }
+          }
+        }
+      };
+
       function notifyWasmConnection(connected) {
         if (typeof window.__wasm_serial_set_connected_js === 'function') {
           window.__wasm_serial_set_connected_js(connected ? true : false);
@@ -686,6 +755,16 @@ def patch_html(build_dir="build-wasm"):
           e.preventDefault();
           e.stopPropagation();
           window.toggleWebSerial();
+        });
+      }
+
+      // Attach explicit event listeners to Connect BLE button
+      const bleBtn = document.getElementById('btn-webble-connect');
+      if (bleBtn) {
+        bleBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.toggleWebBle();
         });
       }
 

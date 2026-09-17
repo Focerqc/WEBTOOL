@@ -184,6 +184,8 @@ private:
     int mConfigVersion;
     bool mStoreConfigVersion;
     int mUpdateCnt;
+    quint32 mRxSignature;
+    VByteArray mTrailingBytes;
 
     bool almostEqual(float A, float B, float eps);
 

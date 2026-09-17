@@ -41,6 +41,7 @@ ConfigParams::ConfigParams(QObject *parent) : QObject(parent)
     mConfigVersion = -1;
     mStoreConfigVersion = true;
     mUpdateCnt = 0;
+    mRxSignature = 0;
 }
 
 void ConfigParams::addParam(const QString &name, ConfigParam param)
@@ -996,10 +997,21 @@ void ConfigParams::clearSerializeOrder()
 
 void ConfigParams::serialize(VByteArray &vb)
 {
-    vb.vbAppendUint32(getSignature());
+    if (mRxSignature != 0) {
+        qDebug().noquote() << QString("[CONFIG] Serializing with hardware-provided signature: 0x%1")
+            .arg(mRxSignature, 8, 16, QLatin1Char('0')).toUpper();
+        vb.vbAppendUint32(mRxSignature);
+    } else {
+        vb.vbAppendUint32(getSignature());
+    }
 
     for (int i = 0;i < mSerializeOrder.size();i++) {
         getParamSerial(vb, mSerializeOrder.at(i));
+    }
+
+    if (!mTrailingBytes.isEmpty()) {
+        qDebug().noquote() << QString("[CONFIG] Appending %1 preserved trailing hardware bytes").arg(mTrailingBytes.size());
+        vb.append(mTrailingBytes);
     }
 }
 
@@ -1008,7 +1020,7 @@ bool ConfigParams::deSerialize(VByteArray &vb)
     auto signature = vb.vbPopFrontUint32();
 
     if (signature != getSignature()) {
-        qWarning().noquote() << QString("[CONFIG] Invalid signature: received 0x%1 (%2), expected 0x%3 (%4), diff: 0x%5, SerOrder count: %6, remaining bytes: %7")
+        qWarning().noquote() << QString("[CONFIG] Signature mismatch: received 0x%1 (%2), expected 0x%3 (%4), diff: 0x%5, SerOrder count: %6, remaining bytes: %7. Proceeding with fault-tolerant deserialization.")
             .arg(signature, 8, 16, QLatin1Char('0')).toUpper()
             .arg(signature)
             .arg(getSignature(), 8, 16, QLatin1Char('0')).toUpper()
@@ -1016,14 +1028,49 @@ bool ConfigParams::deSerialize(VByteArray &vb)
             .arg(signature ^ getSignature(), 8, 16, QLatin1Char('0')).toUpper()
             .arg(mSerializeOrder.size())
             .arg(vb.size());
-        return false;
+        mRxSignature = signature;
+    } else {
+        mRxSignature = 0;
     }
 
+    int bytesBefore = vb.size();
     for (int i = 0;i < mSerializeOrder.size();i++) {
+        if (vb.size() <= 0) {
+            qWarning() << "[CONFIG] Buffer underflow: ran out of bytes at parameter index" << i << mSerializeOrder.at(i);
+            return false;
+        }
         setParamSerial(vb, mSerializeOrder.at(i));
     }
 
+    int bytesConsumed = bytesBefore - vb.size();
+    if (vb.size() > 0) {
+        mTrailingBytes = vb;
+        qDebug().noquote() << QString("[CONFIG] Deserialized %1 parameters (%2 bytes). Preserved %3 trailing bytes: %4")
+            .arg(mSerializeOrder.size())
+            .arg(bytesConsumed)
+            .arg(mTrailingBytes.size())
+            .arg(QString(mTrailingBytes.toHex()));
+        vb.clear();
+    } else {
+        mTrailingBytes.clear();
+        qDebug().noquote() << QString("[CONFIG] Deserialized all %1 parameters successfully with exact match.").arg(mSerializeOrder.size());
+    }
+
     mConfigVersion = VT_CONFIG_VERSION;
+
+    if (mParams.contains("l_current_max") && mParams.contains("l_max_vin")) {
+        double curMax = getParamDouble("l_current_max");
+        double curInMax = getParamDouble("l_in_current_max");
+        double vinMax = getParamDouble("l_max_vin");
+        double motorR = getParamDouble("foc_motor_r") * 1000.0;
+        double motorL = getParamDouble("foc_motor_l") * 1000000.0;
+        qDebug().noquote() << QString("[CONFIG] Motor config sanity check: CurrentMax=%1A, BatCurrentMax=%2A, MaxVin=%3V, MotorR=%4mOhm, MotorL=%5uH")
+            .arg(curMax, 0, 'f', 1)
+            .arg(curInMax, 0, 'f', 1)
+            .arg(vinMax, 0, 'f', 1)
+            .arg(motorR, 0, 'f', 2)
+            .arg(motorL, 0, 'f', 2);
+    }
 
     return true;
 }
@@ -2059,6 +2106,8 @@ ConfigParams &ConfigParams::operator=(const ConfigParams &other)
     this->mUpdatesEnabled = other.mUpdatesEnabled;
     this->mSerializeOrder = other.mSerializeOrder;
     this->mXmlStatus = other.mXmlStatus;
+    this->mRxSignature = other.mRxSignature;
+    this->mTrailingBytes = other.mTrailingBytes;
 
     return *this;
 }

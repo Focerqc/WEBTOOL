@@ -112,6 +112,15 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
         handleQmlUiChunk(false, len, ofs, data);
     });
 
+    m_customConfigAsyncLoading = false;
+    m_customConfigCurrentIdx = 0;
+    m_customConfigTotalLen = -1;
+    m_customConfigRetries = 0;
+    m_customConfigTimeoutTimer = new QTimer(this);
+    m_customConfigTimeoutTimer->setSingleShot(true);
+    connect(m_customConfigTimeoutTimer, &QTimer::timeout, this, &VescInterface::handleCustomConfigTimeout);
+    connect(mCommands, &Commands::customConfigChunkRx, this, &VescInterface::handleCustomConfigChunk);
+
     mLastConnType = static_cast<conn_t>(mSettings.value("connection_type", CONN_NONE).toInt());
     mLastTcpServer = mSettings.value("tcp_server", "127.0.0.1").toString();
     mLastTcpPort = mSettings.value("tcp_port", 65102).toInt();
@@ -4205,11 +4214,16 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
         emit qmlLoadDone();
     }
 #else
-    if (mLoadQmlUiOnConnect && (params.hasQmlApp || params.hasQmlHw)) {
-        startQmlUiAsyncLoad(params, confCacheDir);
-    } else if (params.hasQmlApp || params.hasQmlHw) {
-        emit qmlLoadDone();
+    if (!mIgnoreCustomConfigs && params.customConfigNum > 0) {
+        startCustomConfigAsyncLoad(params, confCacheDir);
+    } else {
+        if (mLoadQmlUiOnConnect && (params.hasQmlApp || params.hasQmlHw)) {
+            startQmlUiAsyncLoad(params, confCacheDir);
+        } else if (params.hasQmlApp || params.hasQmlHw) {
+            emit qmlLoadDone();
+        }
     }
+    return;
 #endif
 
     for (int i = 0;i < mCustomConfigs.size();i++) {
@@ -5040,6 +5054,13 @@ void VescInterface::updateFwRx(bool fwRx)
             }
             m_qmlBuffer.clear();
         }
+        if (m_customConfigAsyncLoading) {
+            m_customConfigAsyncLoading = false;
+            if (m_customConfigTimeoutTimer) {
+                m_customConfigTimeoutTimer->stop();
+            }
+            m_customConfigBuffer.clear();
+        }
     }
 }
 
@@ -5263,6 +5284,266 @@ void VescInterface::handleQmlUiTimeout()
             m_qmlAsyncLoading = false;
             m_qmlBuffer.clear();
             emit qmlLoadDone();
+        }
+    }
+}
+
+void VescInterface::startCustomConfigAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir)
+{
+    m_customConfigParams = params;
+    m_customConfigCacheDir = confCacheDir;
+    m_customConfigAsyncLoading = true;
+    m_customConfigCurrentIdx = 0;
+    m_customConfigRetries = 0;
+    m_customConfigBuffer.clear();
+    m_customConfigTotalLen = -1;
+
+    qDebug().noquote() << QString("[CUSTOM_CFG] Starting async load for %1 custom configs...").arg(params.customConfigNum);
+
+    // Fast path: load as many as possible from cache first
+    while (m_customConfigCurrentIdx < params.customConfigNum) {
+        int i = m_customConfigCurrentIdx;
+        QString confCacheFile;
+        if (!confCacheDir.isEmpty()) {
+            confCacheFile = confCacheDir + "/conf_custom_" + QString::number(i) + ".bin";
+        }
+
+        bool cached = false;
+        if (!confCacheFile.isEmpty()) {
+            QFile f(confCacheFile);
+            if (f.exists() && f.open(QIODevice::ReadOnly)) {
+                auto confData = f.readAll();
+                f.close();
+
+                ConfigParams *cfg = new ConfigParams(this);
+                connect(cfg, &ConfigParams::updateRequested, [this, i]() {
+                    mCommands->customConfigGet(i, false);
+                });
+                connect(cfg, &ConfigParams::updateRequestDefault, [this, i]() {
+                    mCommands->customConfigGet(i, true);
+                });
+
+                if (cfg->loadCompressedParamsXml(confData)) {
+                    mCustomConfigs.append(cfg);
+                    emitStatusMessage(QString("Got cached %1").arg(cfg->getLongName("hw_name")), true);
+                    qDebug().noquote() << QString("[CUSTOM_CFG] Loaded cached custom config %1: %2").arg(i).arg(cfg->getLongName("hw_name"));
+                    m_customConfigCurrentIdx++;
+                    cached = true;
+                } else {
+                    delete cfg;
+                }
+            }
+        }
+
+        if (!cached) {
+            break;
+        }
+    }
+
+    if (m_customConfigCurrentIdx >= params.customConfigNum) {
+        qDebug().noquote() << "[CUSTOM_CFG] All custom configs loaded from cache.";
+        m_customConfigAsyncLoading = false;
+        mCustomConfigsLoaded = (mCustomConfigs.size() > 0);
+        for (int i = 0; i < mCustomConfigs.size(); i++) {
+            commands()->customConfigGet(i, false);
+        }
+        mCustomConfigRxDone = true;
+        emit customConfigLoadDone();
+
+        if (mLoadQmlUiOnConnect && (params.hasQmlApp || params.hasQmlHw)) {
+            startQmlUiAsyncLoad(params, confCacheDir);
+        } else if (params.hasQmlApp || params.hasQmlHw) {
+            emit qmlLoadDone();
+        }
+        return;
+    }
+
+    int idx = m_customConfigCurrentIdx;
+    emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(idx), true);
+    qDebug().noquote() << QString("[CUSTOM_CFG] Requesting initial chunk for custom config %1...").arg(idx);
+    mCommands->customConfigGetChunk(idx, 10, 0);
+    if (m_customConfigTimeoutTimer) {
+        m_customConfigTimeoutTimer->start(1500);
+    }
+}
+
+void VescInterface::handleCustomConfigChunk(int confInd, int lenConf, int ofsConf, const QByteArray &data)
+{
+    if (!m_customConfigAsyncLoading) {
+        return;
+    }
+
+    if (confInd != m_customConfigCurrentIdx) {
+        return;
+    }
+
+    if (m_customConfigTimeoutTimer) {
+        m_customConfigTimeoutTimer->stop();
+    }
+    m_customConfigRetries = 0;
+    m_customConfigTotalLen = lenConf;
+
+    if (m_customConfigTotalLen <= 0) {
+        qWarning().noquote() << QString("[CUSTOM_CFG] Custom config %1 reported total length %2, skipping.").arg(confInd).arg(lenConf);
+        m_customConfigCurrentIdx++;
+        m_customConfigBuffer.clear();
+        m_customConfigTotalLen = -1;
+
+        if (m_customConfigCurrentIdx < m_customConfigParams.customConfigNum) {
+            emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
+            mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
+            if (m_customConfigTimeoutTimer) {
+                m_customConfigTimeoutTimer->start(1500);
+            }
+        } else {
+            m_customConfigAsyncLoading = false;
+            mCustomConfigsLoaded = (mCustomConfigs.size() > 0);
+            for (int i = 0; i < mCustomConfigs.size(); i++) {
+                commands()->customConfigGet(i, false);
+            }
+            mCustomConfigRxDone = true;
+            emit customConfigLoadDone();
+            qDebug().noquote() << QString("[CUSTOM_CFG] Finished async loading. Total custom configs: %1. Emitted customConfigLoadDone().").arg(mCustomConfigs.size());
+
+            if (mLoadQmlUiOnConnect && (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw)) {
+                startQmlUiAsyncLoad(m_customConfigParams, m_customConfigCacheDir);
+            } else if (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw) {
+                emit qmlLoadDone();
+            }
+        }
+        return;
+    }
+
+    if (ofsConf <= m_customConfigBuffer.size()) {
+        if (ofsConf < m_customConfigBuffer.size()) {
+            m_customConfigBuffer.truncate(ofsConf);
+        }
+        m_customConfigBuffer.append(data);
+    }
+
+    emitStatusMessage(QString("Loading Custom Config %1 (%2 / %3 bytes)...")
+                      .arg(confInd)
+                      .arg(m_customConfigBuffer.size())
+                      .arg(m_customConfigTotalLen), true);
+
+    if (m_customConfigBuffer.size() >= m_customConfigTotalLen) {
+        ConfigParams *cfg = new ConfigParams(this);
+        int idx = m_customConfigCurrentIdx;
+        connect(cfg, &ConfigParams::updateRequested, [this, idx]() {
+            mCommands->customConfigGet(idx, false);
+        });
+        connect(cfg, &ConfigParams::updateRequestDefault, [this, idx]() {
+            mCommands->customConfigGet(idx, true);
+        });
+
+        if (cfg->loadCompressedParamsXml(m_customConfigBuffer)) {
+            mCustomConfigs.append(cfg);
+            QString hwName = cfg->getLongName("hw_name");
+            emitStatusMessage(QString("Got %1").arg(hwName), true);
+            qDebug().noquote() << QString("[CUSTOM_CFG] Successfully loaded custom config %1: %2 (%3 params)")
+                .arg(idx).arg(hwName).arg(cfg->getSerializeOrder().size());
+
+            if (!m_customConfigCacheDir.isEmpty()) {
+                QString confCacheFile = m_customConfigCacheDir + "/conf_custom_" + QString::number(idx) + ".bin";
+                QFile f(confCacheFile);
+                if (f.open(QIODevice::WriteOnly)) {
+                    f.write(m_customConfigBuffer);
+                    f.close();
+                    emitStatusMessage(QString("Cached %1").arg(confCacheFile), true);
+                }
+            }
+        } else {
+            delete cfg;
+            qWarning().noquote() << QString("[CUSTOM_CFG] Failed to decompress/load XML for custom config %1").arg(idx);
+        }
+
+        m_customConfigBuffer.clear();
+        m_customConfigTotalLen = -1;
+        m_customConfigCurrentIdx++;
+
+        if (m_customConfigCurrentIdx < m_customConfigParams.customConfigNum) {
+            emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
+            mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
+            if (m_customConfigTimeoutTimer) {
+                m_customConfigTimeoutTimer->start(1500);
+            }
+        } else {
+            m_customConfigAsyncLoading = false;
+            mCustomConfigsLoaded = (mCustomConfigs.size() > 0);
+            for (int i = 0; i < mCustomConfigs.size(); i++) {
+                commands()->customConfigGet(i, false);
+            }
+            mCustomConfigRxDone = true;
+            emit customConfigLoadDone();
+            qDebug().noquote() << QString("[CUSTOM_CFG] Finished async loading. Total custom configs: %1. Emitted customConfigLoadDone().").arg(mCustomConfigs.size());
+
+            if (mLoadQmlUiOnConnect && (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw)) {
+                startQmlUiAsyncLoad(m_customConfigParams, m_customConfigCacheDir);
+            } else if (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw) {
+                emit qmlLoadDone();
+            }
+        }
+    } else {
+        int dataLeft = m_customConfigTotalLen - m_customConfigBuffer.size();
+        int chunkSize = dataLeft > 400 ? 400 : dataLeft;
+        mCommands->customConfigGetChunk(confInd, chunkSize, m_customConfigBuffer.size());
+        if (m_customConfigTimeoutTimer) {
+            m_customConfigTimeoutTimer->start(1500);
+        }
+    }
+}
+
+void VescInterface::handleCustomConfigTimeout()
+{
+    if (!m_customConfigAsyncLoading) {
+        return;
+    }
+
+    m_customConfigRetries++;
+    if (m_customConfigRetries <= 5) {
+        int currentSize = m_customConfigBuffer.size();
+        int dataLeft = (m_customConfigTotalLen > 0) ? (m_customConfigTotalLen - currentSize) : 10;
+        int chunkSize = dataLeft > 400 ? 400 : (dataLeft <= 0 ? 10 : dataLeft);
+
+        qDebug().noquote() << QString("[CUSTOM_CFG] Timeout waiting for custom config %1, retry %2/5...").arg(m_customConfigCurrentIdx).arg(m_customConfigRetries);
+        mCommands->customConfigGetChunk(m_customConfigCurrentIdx, chunkSize, currentSize);
+        if (m_customConfigTimeoutTimer) {
+            m_customConfigTimeoutTimer->start(1500);
+        }
+    } else {
+        if (m_customConfigTimeoutTimer) {
+            m_customConfigTimeoutTimer->stop();
+        }
+        qWarning().noquote() << QString("[CUSTOM_CFG] Failed to read custom config %1 after 5 retries.").arg(m_customConfigCurrentIdx);
+        emitMessageDialog("Get Custom Config",
+                          QString("Could not read custom config %1 from hardware (timeout)").arg(m_customConfigCurrentIdx),
+                          false, false);
+
+        m_customConfigBuffer.clear();
+        m_customConfigTotalLen = -1;
+        m_customConfigCurrentIdx++;
+
+        if (m_customConfigCurrentIdx < m_customConfigParams.customConfigNum) {
+            emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
+            mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
+            if (m_customConfigTimeoutTimer) {
+                m_customConfigTimeoutTimer->start(1500);
+            }
+        } else {
+            m_customConfigAsyncLoading = false;
+            mCustomConfigsLoaded = (mCustomConfigs.size() > 0);
+            for (int i = 0; i < mCustomConfigs.size(); i++) {
+                commands()->customConfigGet(i, false);
+            }
+            mCustomConfigRxDone = true;
+            emit customConfigLoadDone();
+            qDebug().noquote() << QString("[CUSTOM_CFG] Finished async loading. Total custom configs: %1. Emitted customConfigLoadDone().").arg(mCustomConfigs.size());
+
+            if (mLoadQmlUiOnConnect && (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw)) {
+                startQmlUiAsyncLoad(m_customConfigParams, m_customConfigCacheDir);
+            } else if (m_customConfigParams.hasQmlApp || m_customConfigParams.hasQmlHw) {
+                emit qmlLoadDone();
+            }
         }
     }
 }

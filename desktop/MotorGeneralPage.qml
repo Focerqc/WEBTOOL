@@ -62,6 +62,7 @@ Item {
                         }
 
                         Component.onCompleted: {
+                            subgroupCols[modelData] = paramCol
                             loadSubgroup(paramCol, modelData)
                         }
                     }
@@ -69,6 +70,8 @@ Item {
             }
         }
     }
+
+    property var subgroupCols: ({})
 
     function loadSubgroup(parentCol, subgroup) {
         var params = mMcConf.getParamsFromSubgroup("General", subgroup)
@@ -87,16 +90,25 @@ Item {
         }
     }
 
+    function reloadAll() {
+        for (var d = 0; d < _dynamicItems.length; d++) {
+            if (_dynamicItems[d]) _dynamicItems[d].destroy()
+        }
+        _dynamicItems = []
+
+        var list = ["general", "sensors", "current", "voltage", "rpm", "wattage", "temperature", "bms", "advanced"]
+        for (var i = 0; i < list.length; i++) {
+            var col = subgroupCols[list[i]]
+            if (col) {
+                loadSubgroup(col, list[i])
+            }
+        }
+    }
+
     Connections {
         target: mMcConf
         function onUpdated() {
-            // Destroy and reload
-            for (var d = 0; d < _dynamicItems.length; d++) {
-                if (_dynamicItems[d]) _dynamicItems[d].destroy()
-            }
-            _dynamicItems = []
-            // Trigger reload by recreating the StackLayout content
-            // This is handled by Repeater's Component.onCompleted
+            reloadAll()
         }
     }
 }

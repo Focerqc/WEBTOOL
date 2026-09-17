@@ -244,6 +244,12 @@ Item {
                             Layout.fillWidth: true
                         }
 
+                        Text {
+                            id: dlTextLatest
+                            Layout.fillWidth: true
+                            color: Utility.getAppHexColor("lightText")
+                        }
+
                         Item {
                             // Spacer
                             Layout.fillWidth: true
@@ -917,7 +923,7 @@ Item {
             dlProg.value = prog
             dlText.text = msg
             dlProgLatest.value = prog
-            dlProgLatest.text = msg
+            dlTextLatest.text = msg
         }
     }
 

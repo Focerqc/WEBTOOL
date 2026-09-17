@@ -979,6 +979,9 @@ ApplicationWindow {
         headerBar.visible = true
         tabBar.enabled = true
 
+        console.log("[QML_LOAD] updateHwAppUi() called. Connected:", VescIf.isPortConnected(),
+                    "qmlHwLoaded:", VescIf.qmlHwLoaded(), "qmlAppLoaded:", VescIf.qmlAppLoaded())
+
         if (VescIf.isPortConnected() && VescIf.qmlHwLoaded()) {
             if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
                 mainSwipeView.interactive = false
@@ -987,6 +990,7 @@ ApplicationWindow {
             }
 
             try {
+                console.log("[QML_LOAD] Instantiating HwUi QML object (len=" + VescIf.qmlHw().length + ")...")
                 hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
                 if (hwUiObj) {
                     mainSwipeView.insertItem(1, uiHwPage)
@@ -997,14 +1001,17 @@ ApplicationWindow {
                     if (hwUiObj.tabTitle) {
                         uiHwButton.text = hwUiObj.tabTitle
                     }
+                    console.log("[QML_LOAD] HwUi inserted into tabs! TabTitle:", uiHwButton.text)
 
                     if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
                         mainSwipeView.setCurrentIndex(0)
                         mainSwipeView.setCurrentIndex(1)
                     }
+                } else {
+                    console.warn("[QML_LOAD] Qt.createQmlObject for HwUi returned null.")
                 }
             } catch (err) {
-                console.warn("Failed to create HwUi QML object:", err)
+                console.error("[QML_LOAD] Failed to create HwUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
             }
         } else {
             uiHwPage.visible = false
@@ -1020,6 +1027,7 @@ ApplicationWindow {
             }
 
             try {
+                console.log("[QML_LOAD] Instantiating AppUi QML object (len=" + VescIf.qmlApp().length + ")...")
                 appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
                 if (appUiObj) {
                     mainSwipeView.insertItem(1, uiAppPage)
@@ -1030,14 +1038,17 @@ ApplicationWindow {
                     if (appUiObj.tabTitle) {
                         uiAppButton.text = appUiObj.tabTitle
                     }
+                    console.log("[QML_LOAD] AppUi inserted into tabs! TabTitle:", uiAppButton.text)
 
                     if (VescIf.getLastFwRxParams().qmlAppFullscreen) {
                         mainSwipeView.setCurrentIndex(0)
                         mainSwipeView.setCurrentIndex(1)
                     }
+                } else {
+                    console.warn("[QML_LOAD] Qt.createQmlObject for AppUi returned null.")
                 }
             } catch (err) {
-                console.warn("Failed to create AppUi QML object:", err)
+                console.error("[QML_LOAD] Failed to create AppUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
             }
         } else {
             uiAppPage.visible = false
@@ -1056,12 +1067,18 @@ ApplicationWindow {
             if (confCustomLoader.status == Loader.Ready) {
                 stop()
 
-                if (VescIf.isPortConnected() && VescIf.customConfig(0) !== null) {
+                var hasCust = (VescIf.isPortConnected() && VescIf.customConfig(0) !== null)
+                console.log("[CUSTOM_CFG] confCustomTimer triggered. Connected:", VescIf.isPortConnected(),
+                            "hasCust:", hasCust, "loaderReady:", (confCustomLoader.status == Loader.Ready))
+
+                if (hasCust) {
                     mainSwipeView.insertItem(4, confCustomPage)
                     tabBar.insertItem(4, confCustomButton)
                     confCustomPage.visible = true
                     confCustomLoader.item.reloadConfig()
-                    confCustomButton.text = VescIf.customConfig(0).getLongName("hw_name")
+                    var hwName = VescIf.customConfig(0).getLongName("hw_name")
+                    confCustomButton.text = hwName ? hwName : "Custom CFG"
+                    console.log("[CUSTOM_CFG] Inserted Custom Config page to tabBar! Title:", confCustomButton.text)
                 } else {
                     confCustomPage.visible = false
                     confCustomPage.parent = null
@@ -1171,7 +1188,13 @@ ApplicationWindow {
         }
 
         function onQmlLoadDone() {
+            console.log("[QML_LOAD] onQmlLoadDone signal received! askQmlLoad:", VescIf.askQmlLoad(),
+                        "hasQmlApp:", VescIf.getLastFwRxParams().hasQmlApp,
+                        "hasQmlHw:", VescIf.getLastFwRxParams().hasQmlHw,
+                        "qmlAppLoaded:", VescIf.qmlAppLoaded(),
+                        "qmlHwLoaded:", VescIf.qmlHwLoaded())
             if (VescIf.askQmlLoad()) {
+                console.log("[QML_LOAD] Opening qmlLoadDialog for user confirmation...")
                 qmlLoadDialog.open()
             } else {
                 updateHwAppUi()
@@ -1179,6 +1202,7 @@ ApplicationWindow {
         }
 
         function onCustomConfigLoadDone() {
+            console.log("[CUSTOM_CFG] onCustomConfigLoadDone signal received! Total loaded configs:", VescIf.customConfigNum())
             updateConfCustom()
         }
     }
@@ -1262,11 +1286,13 @@ ApplicationWindow {
         }
 
         onAccepted: {
+            console.log("[QML_LOAD] User accepted custom QML load in dialog.")
             VescIf.setAskQmlLoad(!qmlDoNotAskAgainBox.checked)
             updateHwAppUi()
         }
 
         onRejected: {
+            console.warn("[QML_LOAD] User rejected custom QML load in dialog.")
             VescIf.disconnectPort()
         }
     }

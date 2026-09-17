@@ -34,7 +34,6 @@
 #include <QQmlEngine>
 
 #ifdef Q_OS_WASM
-#undef HAS_BLUETOOTH
 #undef HAS_CANBUS
 #undef HAS_POS
 #undef HAS_GAMEPAD
@@ -59,8 +58,12 @@
 #include "tcpserversimple.h"
 #include "udpserversimple.h"
 
-#if defined(HAS_BLUETOOTH) && !defined(Q_OS_WASM)
+#if defined(HAS_BLUETOOTH)
+#if defined(Q_OS_WASM)
+#include "bleuart_wasm.h"
+#else
 #include "bleuart.h"
+#endif
 #else
 #include "bleuartdummy.h"
 #endif
@@ -179,7 +182,7 @@ public:
     Q_INVOKABLE bool askQmlLoad() const;
     Q_INVOKABLE void setAskQmlLoad(bool newAskQmlLoad);
 
-#if defined(HAS_BLUETOOTH) && !defined(Q_OS_WASM)
+#if defined(HAS_BLUETOOTH)
     Q_INVOKABLE BleUart* bleDevice();
     Q_INVOKABLE void storeBleName(QString address, QString name);
     Q_INVOKABLE QString getBleName(QString address);
@@ -379,6 +382,9 @@ private slots:
     void startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir);
     void handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QByteArray &data);
     void handleQmlUiTimeout();
+    void startCustomConfigAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir);
+    void handleCustomConfigChunk(int confInd, int lenConf, int ofsConf, const QByteArray &data);
+    void handleCustomConfigTimeout();
 
 private:
     typedef enum {
@@ -424,6 +430,14 @@ private:
     QString m_qmlCacheDir;
     FW_RX_PARAMS m_qmlParams;
     QTimer *m_qmlTimeoutTimer;
+    bool m_customConfigAsyncLoading;
+    int m_customConfigCurrentIdx;
+    QByteArray m_customConfigBuffer;
+    int m_customConfigTotalLen;
+    int m_customConfigRetries;
+    QString m_customConfigCacheDir;
+    FW_RX_PARAMS m_customConfigParams;
+    QTimer *m_customConfigTimeoutTimer;
 
     QTimer *mTimer;
     Packet *mPacket;

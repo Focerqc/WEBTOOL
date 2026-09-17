@@ -59,6 +59,34 @@ Item {
         }
     }
 
+    function ensureLocalDevice() {
+        if (canModel.count === 0 && VescIf.isPortConnected() && VescIf.fwRx()) {
+            var params = VescIf.getLastFwRxParams()
+            var name = params.hw
+            var theme = "qrc" + Utility.getThemePath()
+            var devicePath = theme + "icons/motor_side.png"
+            var logoPath = " "
+            if (params.major === -1) {
+                devicePath = theme + "icons/Help-96.png"
+                name = "Unknown"
+            } else if (params.hwTypeStr() === "VESC") {
+                devicePath = theme + "icons/motor_side.png"
+                name = (params.fwName.length !== 0) ? (params.hw + "-" + params.fwName) : params.hw
+            } else if (params.hwTypeStr() === "VESC BMS") {
+                devicePath = theme + "icons/icons8-battery-100.png"
+                name = (params.fwName.length !== 0) ? (params.hw + "-" + params.fwName) : params.hw
+            } else {
+                devicePath = theme + "icons/Electronics-96.png"
+                name = (params.fwName.length !== 0) ? (params.hw + "-" + params.fwName) : params.hw
+            }
+            name = name.replace("_", " ")
+            canModel.append({"name": name,
+                             "ID": "LOCAL",
+                             "deviceIconPath": devicePath,
+                             "logoIconPath": logoPath})
+        }
+    }
+
     Timer {
         repeat: true
         interval: 1000
@@ -71,6 +99,7 @@ Item {
                 canModel.clear()
                 scanButton.enabled = false
             } else {
+                ensureLocalDevice()
                 selectDeviceInList()
             }
 
@@ -288,12 +317,15 @@ Item {
 
             if (VescIf.isPortConnected()) {
                 canModel.clear()
-                var params = Utility.getFwVersionBlockingCan(VescIf, -1)
+                var params = VescIf.getLastFwRxParams()
+                if (params.major === -1) {
+                    params = Utility.getFwVersionBlockingCan(VescIf, -1)
+                }
                 var name = params.hw
-                var theme ="qrc"  + Utility.getThemePath()
-                var devicePath
+                var theme = "qrc" + Utility.getThemePath()
+                var devicePath = theme + "icons/motor_side.png"
                 var logoPath = " "
-                if (params.major === -1){
+                if (params.major === -1) {
                     devicePath = theme + "icons/Help-96.png"
                     name = "Unknown"
                 } else if (params.hwTypeStr() === "VESC") { //is a motor
