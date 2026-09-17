@@ -168,6 +168,7 @@ def patch_html(build_dir="build-wasm"):
         <span style="white-space:nowrap;">Qt: <span id="diag-val-qt" style="color:#fde047;">Initializing...</span></span>
       </div>
       <div style="display:flex;gap:6px;align-items:center;position:relative;z-index:100000;pointer-events:auto;">
+        <button id="btn-copy-logs-mini" type="button" onclick="window.copyLogsToClipboard()" style="background:#059669;border:1px solid #047857;color:#ffffff;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">📋 Copy</button>
         <button type="button" onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
         <button id="btn-toggle-logs" type="button" onclick="window.toggleLogsPanel()" style="background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:3px 10px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;white-space:nowrap;">Toggle Logs 📑</button>
       </div>
@@ -178,6 +179,7 @@ def patch_html(build_dir="build-wasm"):
       <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);border-radius:8px 8px 0 0;font-weight:600;flex-wrap:wrap;gap:6px;">
         <span style="color:#38bdf8;font-size:11px;">📋 VESC Diagnostics & Logs</span>
         <div style="display:flex;gap:6px;align-items:center;">
+          <button id="btn-copy-logs" type="button" onclick="window.copyLogsToClipboard()" style="background:#059669;border:1px solid #047857;color:#ffffff;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;font-weight:600;">📋 Copy Logs</button>
           <button id="btn-toggle-filter-serial" type="button" onclick="window.toggleSerialFilter()" style="background:#0284c7;border:1px solid #0369a1;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">🔇 Serial Hex Hidden</button>
           <button type="button" onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
           <button type="button" onclick="window.toggleLogsPanel()" style="background:#dc2626;border:1px solid #b91c1c;color:#ffffff;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">✖ Close</button>
@@ -229,6 +231,68 @@ def patch_html(build_dir="build-wasm"):
         const isHidden = (p.style.display === 'none' || !p.style.display);
         p.style.display = isHidden ? 'flex' : 'none';
       };
+
+      window.copyLogsToClipboard = function() {
+        if (!logContainer) return;
+        const btn = document.getElementById('btn-copy-logs');
+        const miniBtn = document.getElementById('btn-copy-logs-mini');
+        const items = logContainer.children;
+        const visibleLines = [];
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].style.display !== 'none') {
+            visibleLines.push(items[i].textContent);
+          }
+        }
+        const linesToCopy = visibleLines.length > 1000 ? visibleLines.slice(-1000) : visibleLines;
+        const fullText = linesToCopy.join(String.fromCharCode(10));
+
+        const onSuccess = function() {
+          if (btn) {
+            const orig = btn.textContent;
+            btn.textContent = '✓ Copied!';
+            btn.style.background = '#10b981';
+            setTimeout(function() {
+              btn.textContent = orig;
+              btn.style.background = '#059669';
+            }, 1500);
+          }
+          if (miniBtn) {
+            miniBtn.textContent = '✓ Copied';
+            miniBtn.style.background = '#10b981';
+            setTimeout(function() {
+              miniBtn.textContent = '📋 Copy';
+              miniBtn.style.background = '#059669';
+            }, 1500);
+          }
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(fullText).then(onSuccess).catch(function() {
+            fallbackCopy(fullText, onSuccess);
+          });
+        } else {
+          fallbackCopy(fullText, onSuccess);
+        }
+      };
+
+      function fallbackCopy(text, cb) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          document.execCommand('copy');
+          if (cb) cb();
+        } catch(e) {
+          console.error('Copy fallback failed: ', e);
+        }
+        document.body.removeChild(ta);
+      }
 
       function isFilteredMessage(text) {
         if (typeof text !== 'string') return false;

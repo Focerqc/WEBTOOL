@@ -1846,39 +1846,53 @@ bool Utility::configCheckCompatibility(int fwMajor, int fwMinor)
 
 bool Utility::configLoad(VescInterface *vesc, int fwMajor, int fwMinor)
 {
-    QDirIterator it(Utility::configPath(""));
+    QString fwStr = QString("%1.%2").arg(fwMajor).arg(fwMinor, 2, 10, QLatin1Char('0'));
+    qDebug().noquote() << QString("[CONFIG] configLoad looking for FW %1 in %2").arg(fwStr).arg(Utility::configPath(""));
 
+    // 1. Try direct lookup first (most reliable in Qt QRC on WASM)
+    QFileInfo fMcDirect(Utility::configPath(fwStr + "/parameters_mcconf.xml"));
+    QFileInfo fAppDirect(Utility::configPath(fwStr + "/parameters_appconf.xml"));
+    QFileInfo fInfoDirect(Utility::configPath(fwStr + "/info.xml"));
+
+    if (fMcDirect.exists() && fAppDirect.exists() && fInfoDirect.exists()) {
+        qDebug().noquote() << QString("[CONFIG] Direct QRC config match found for FW %1").arg(fwStr);
+        vesc->mcConfig()->loadParamsXml(fMcDirect.absoluteFilePath());
+        vesc->appConfig()->loadParamsXml(fAppDirect.absoluteFilePath());
+        vesc->infoConfig()->loadParamsXml(fInfoDirect.absoluteFilePath());
+        vesc->emitConfigurationChanged();
+        return true;
+    }
+
+    // 2. Fallback to iteration (supporting both fi.isDir() and non-isDir QRC virtual nodes)
+    QDirIterator it(Utility::configPath(""), QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
     while (it.hasNext()) {
         QFileInfo fi(it.next());
         QStringList names = fi.fileName().split("_o_");
 
-        if (fi.isDir()) {
-            for(auto name: names) {
-                auto parts = name.split(".");
-                if (parts.size() == 2) {
-                    int major = parts.at(0).toInt();
-                    int minor = parts.at(1).toInt();
-                    if (major == fwMajor && minor == fwMinor) {
-                        QFileInfo fMc(it.filePath() + "/parameters_mcconf.xml");
-                        QFileInfo fApp(it.filePath() + "/parameters_appconf.xml");
-                        QFileInfo fInfo(it.filePath() + "/info.xml");
+        for (auto name: names) {
+            auto parts = name.split(".");
+            if (parts.size() == 2) {
+                int major = parts.at(0).toInt();
+                int minor = parts.at(1).toInt();
+                if (major == fwMajor && minor == fwMinor) {
+                    QFileInfo fMc(it.filePath() + "/parameters_mcconf.xml");
+                    QFileInfo fApp(it.filePath() + "/parameters_appconf.xml");
+                    QFileInfo fInfo(it.filePath() + "/info.xml");
 
-                        if (fMc.exists() && fApp.exists() && fInfo.exists()) {
-                            vesc->mcConfig()->loadParamsXml(fMc.absoluteFilePath());
-                            vesc->appConfig()->loadParamsXml(fApp.absoluteFilePath());
-                            vesc->infoConfig()->loadParamsXml(fInfo.absoluteFilePath());
-                            vesc->emitConfigurationChanged();
-                            return true;
-                        } else {
-                            qWarning() << "Configurations not found in firmware directory" << it.path();
-                            return false;
-                        }
+                    if (fMc.exists() && fApp.exists() && fInfo.exists()) {
+                        qDebug().noquote() << QString("[CONFIG] Iteration match found for FW %1 in %2").arg(fwStr).arg(it.filePath());
+                        vesc->mcConfig()->loadParamsXml(fMc.absoluteFilePath());
+                        vesc->appConfig()->loadParamsXml(fApp.absoluteFilePath());
+                        vesc->infoConfig()->loadParamsXml(fInfo.absoluteFilePath());
+                        vesc->emitConfigurationChanged();
+                        return true;
                     }
                 }
             }
         }
     }
 
+    qWarning().noquote() << QString("[CONFIG] Configuration files not found for FW %1").arg(fwStr);
     return false;
 }
 
@@ -1892,8 +1906,9 @@ QPair<int, int> Utility::configLatestSupported()
 bool Utility::configLoadLatest(VescInterface *vesc)
 {
     auto latestSupported = configLatestSupported();
+    auto fwPairs = vesc->getSupportedFirmwarePairs();
 
-    if (latestSupported.first >= 0) {
+    if (!fwPairs.contains(latestSupported)) {
         configLoad(vesc, latestSupported.first, latestSupported.second);
         return true;
     } else {
@@ -1904,19 +1919,34 @@ bool Utility::configLoadLatest(VescInterface *vesc)
 QVector<QPair<int, int> > Utility::configSupportedFws()
 {
     QVector<QPair<int, int>> res;
-    QDirIterator it(Utility::configPath(""));
 
+    // Pre-populate with known bundled versions from res_config.qrc to ensure WASM never fails
+    static const QVector<QPair<int, int>> bundled = {
+        {3, 55}, {3, 56}, {3, 57}, {3, 58}, {3, 59}, {3, 60}, {3, 61}, {3, 62}, {3, 63}, {3, 64}, {3, 65}, {3, 66},
+        {4, 0}, {4, 1}, {4, 2},
+        {5, 0}, {5, 1}, {5, 2}, {5, 3},
+        {6, 0}, {6, 2}, {6, 5}, {6, 6},
+        {7, 0}
+    };
+    for (const auto &p : bundled) {
+        if (!res.contains(p)) {
+            res.append(p);
+        }
+    }
+
+    QDirIterator it(Utility::configPath(""), QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
     while (it.hasNext()) {
         QFileInfo fi(it.next());
         QStringList names = fi.fileName().split("_o_");
 
-        if (fi.isDir()) {
-            for(auto name: names) {
-                auto parts = name.split(".");
-                if (parts.size() == 2) {
-                    int major = parts.at(0).toInt();
-                    int minor = parts.at(1).toInt();
-                    res.append(qMakePair(major, minor));
+        for (auto name: names) {
+            auto parts = name.split(".");
+            if (parts.size() == 2) {
+                int major = parts.at(0).toInt();
+                int minor = parts.at(1).toInt();
+                auto p = qMakePair(major, minor);
+                if (!res.contains(p)) {
+                    res.append(p);
                 }
             }
         }

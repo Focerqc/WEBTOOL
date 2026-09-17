@@ -164,6 +164,13 @@ void Commands::processPacket(QByteArray data)
             params.hwConfCrc = vb.vbPopFrontUint32();
         }
 
+        qDebug().noquote() << QString("[COMMANDS] COMM_FW_VERSION received: FW %1.%2, HW: %3, name: %4, isTest: %5")
+            .arg(params.major)
+            .arg(params.minor)
+            .arg(params.hw)
+            .arg(params.fwName)
+            .arg(params.isTestFw);
+
         emit fwVersionReceived(params);
     } break;
 

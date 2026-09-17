@@ -1008,7 +1008,14 @@ bool ConfigParams::deSerialize(VByteArray &vb)
     auto signature = vb.vbPopFrontUint32();
 
     if (signature != getSignature()) {
-        qWarning() << "Invalid signature";
+        qWarning().noquote() << QString("[CONFIG] Invalid signature: received 0x%1 (%2), expected 0x%3 (%4), diff: 0x%5, SerOrder count: %6, remaining bytes: %7")
+            .arg(signature, 8, 16, QLatin1Char('0')).toUpper()
+            .arg(signature)
+            .arg(getSignature(), 8, 16, QLatin1Char('0')).toUpper()
+            .arg(getSignature())
+            .arg(signature ^ getSignature(), 8, 16, QLatin1Char('0')).toUpper()
+            .arg(mSerializeOrder.size())
+            .arg(vb.size());
         return false;
     }
 

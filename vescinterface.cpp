@@ -3772,8 +3772,13 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
         compCommands.append(int(COMM_LOG_DATA_F64));
     }
 
-    if (params.hwType == HW_TYPE_VESC &&
-            (fwPairs.contains(fw_connected) || Utility::configSupportedFws().contains(fw_connected))) {
+    const bool isFwPair = fwPairs.contains(fw_connected);
+    const bool isSupportedFw = Utility::configSupportedFws().contains(fw_connected);
+    qDebug().noquote() << QString("[VESC_IF] FW %1.%2 connected. isFwPair: %3, isSupportedFw: %4, hwType: %5")
+        .arg(fw_connected.first).arg(fw_connected.second)
+        .arg(isFwPair).arg(isSupportedFw).arg(int(params.hwType));
+
+    if (params.hwType == HW_TYPE_VESC && (isFwPair || isSupportedFw)) {
         compCommands.append(int(COMM_SET_MCCONF));
         compCommands.append(int(COMM_GET_MCCONF));
         compCommands.append(int(COMM_GET_MCCONF_DEFAULT));
@@ -3781,11 +3786,18 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
         compCommands.append(int(COMM_GET_APPCONF));
         compCommands.append(int(COMM_GET_APPCONF_DEFAULT));
 
-        if (!fwPairs.contains(fw_connected)) {
-            Utility::configLoad(this, fw_connected.first, fw_connected.second);
+        if (!isFwPair) {
+            qDebug().noquote() << QString("[VESC_IF] Loading matching configuration for FW %1.%2")
+                .arg(fw_connected.first).arg(fw_connected.second);
+            bool loaded = Utility::configLoad(this, fw_connected.first, fw_connected.second);
+            qDebug().noquote() << QString("[VESC_IF] configLoad result for FW %1.%2: %3")
+                .arg(fw_connected.first).arg(fw_connected.second).arg(loaded);
         }
 
         mFwSupportsConfiguration = true;
+    } else {
+        qWarning().noquote() << QString("[VESC_IF] Warning: FW %1.%2 not considered configuration-supported! Keeping default latest config.")
+            .arg(fw_connected.first).arg(fw_connected.second);
     }
 
     // Only store the config version if the loaded firmware is the latest one. This will
