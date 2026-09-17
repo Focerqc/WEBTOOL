@@ -197,7 +197,9 @@ public slots:
     void setDetect(disp_pos_mode mode);
     void samplePrint(debug_sampling_mode mode, int sample_len, int dec, bool raw);
     void getMcconf();
+    void getMcconfForce(bool force = true);
     void getMcconfDefault();
+    void getMcconfDefaultForce(bool force = true);
     void setMcconf(bool check = true);
     void getAppConf();
     void getAppConfDefault();

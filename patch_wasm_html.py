@@ -174,19 +174,54 @@ def patch_html(build_dir="build-wasm"):
     </div>
 
     <!-- Side Log Panel -->
-    <div id="vesc-diagnostics-logs-panel" style="display:none;position:fixed;top:10px;right:10px;bottom:50px;width:520px;max-width:calc(50vw - 245px);min-width:320px;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid rgba(2,132,199,0.4);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);z-index:100000;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;color:#e2e8f0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);border-radius:8px 8px 0 0;font-weight:600;">
-        <span style="color:#38bdf8;font-size:11px;">📋 VESC Telemetry & System Logs</span>
-        <div style="display:flex;gap:6px;">
-          <button onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
-          <button onclick="window.toggleLogsPanel()" style="background:#dc2626;border:1px solid #b91c1c;color:#ffffff;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">✖ Close</button>
+    <div id="vesc-diagnostics-logs-panel" style="display:none;position:fixed;top:10px;right:10px;bottom:50px;width:540px;max-width:calc(50vw - 245px);min-width:320px;background:rgba(15,23,42,0.96);backdrop-filter:blur(10px);border:1px solid rgba(2,132,199,0.4);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);z-index:100000;flex-direction:column;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;color:#e2e8f0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(30,41,59,0.98);border-bottom:1px solid rgba(255,255,255,0.1);border-radius:8px 8px 0 0;font-weight:600;flex-wrap:wrap;gap:6px;">
+        <span style="color:#38bdf8;font-size:11px;">📋 VESC Diagnostics & Logs</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button id="btn-toggle-filter-serial" type="button" onclick="window.toggleSerialFilter()" style="background:#0284c7;border:1px solid #0369a1;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">🔇 Serial Hex Hidden</button>
+          <button type="button" onclick="const l=document.getElementById('vesc-diagnostics-logs');if(l)l.innerHTML='';" style="background:#334155;border:1px solid #475569;color:#f1f5f9;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">Clear</button>
+          <button type="button" onclick="window.toggleLogsPanel()" style="background:#dc2626;border:1px solid #b91c1c;color:#ffffff;padding:2px 8px;font-size:10px;border-radius:3px;cursor:pointer;">✖ Close</button>
         </div>
+      </div>
+      <div style="display:flex;padding:4px 8px;background:rgba(15,23,42,0.8);border-bottom:1px solid rgba(255,255,255,0.05);gap:6px;">
+        <input id="log-filter-input" type="text" placeholder="Search / filter logs (e.g. error, warn, mcconf)..." oninput="window.applyLogFilters()" style="flex:1;background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:3px 8px;font-size:10px;border-radius:3px;outline:none;" />
       </div>
       <div id="vesc-diagnostics-logs" style="flex:1;overflow-y:auto;padding:8px 12px;line-height:1.45;word-break:break-all;white-space:pre-wrap;"></div>
     </div>
     <script>
     (function() {
       const logContainer = document.getElementById('vesc-diagnostics-logs');
+      let hideSerialTraffic = true;
+
+      window.toggleSerialFilter = function() {
+        hideSerialTraffic = !hideSerialTraffic;
+        const btn = document.getElementById('btn-toggle-filter-serial');
+        if (btn) {
+          btn.style.background = hideSerialTraffic ? '#0284c7' : '#475569';
+          btn.style.borderColor = hideSerialTraffic ? '#0369a1' : '#64748b';
+          btn.textContent = hideSerialTraffic ? '🔇 Serial Hex Hidden' : '🔊 Show Serial Hex';
+        }
+        window.applyLogFilters();
+      };
+
+      window.applyLogFilters = function() {
+        const query = (document.getElementById('log-filter-input')?.value || '').toLowerCase().trim();
+        if (!logContainer) return;
+        const items = logContainer.children;
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          const isSerial = it.dataset.isSerial === 'true';
+          if (hideSerialTraffic && isSerial) {
+            it.style.display = 'none';
+            continue;
+          }
+          if (query && !it.textContent.toLowerCase().includes(query)) {
+            it.style.display = 'none';
+            continue;
+          }
+          it.style.display = '';
+        }
+      };
 
       window.toggleLogsPanel = function() {
         const p = document.getElementById('vesc-diagnostics-logs-panel');
@@ -228,8 +263,28 @@ def patch_html(build_dir="build-wasm"):
         }
         const ts = new Date().toTimeString().split(' ')[0] + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
         item.textContent = '[' + ts + '] ' + text;
+
+        const isSerial = typeof text === 'string' && (
+          text.startsWith('[SERIAL TX]') ||
+          text.startsWith('[SERIAL RX]') ||
+          text.includes('writeData called with')
+        );
+        if (isSerial) {
+          item.dataset.isSerial = 'true';
+          if (hideSerialTraffic) {
+            item.style.display = 'none';
+          }
+        } else {
+          const query = (document.getElementById('log-filter-input')?.value || '').toLowerCase().trim();
+          if (query && !item.textContent.toLowerCase().includes(query)) {
+            item.style.display = 'none';
+          }
+        }
+
         logContainer.appendChild(item);
-        logContainer.scrollTop = logContainer.scrollHeight;
+        if (item.style.display !== 'none') {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        }
       };
 
       // 1. Live status monitors

@@ -65,8 +65,8 @@ Item {
         standardButtons: Dialog.Close
         modal: true
         focus: true
-        width: parent.width - 20
-        height: column.height - 40
+        width: Math.min(parent.width - 20, 600)
+        height: Math.min(parent.height - 40, 600)
         closePolicy: Popup.CloseOnEscape
 
         Overlay.modal: Rectangle {

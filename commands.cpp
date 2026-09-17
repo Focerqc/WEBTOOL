@@ -312,9 +312,11 @@ void Commands::processPacket(QByteArray data)
 
     case COMM_GET_MCCONF:
     case COMM_GET_MCCONF_DEFAULT:
+        qDebug() << "[COMMANDS] COMM_GET_MCCONF received, payload size:" << vb.size();
         mTimeoutMcconf = 0;
         if (mMcConfig) {
             if (mMcConfig->deSerialize(vb)) {
+                qDebug() << "[COMMANDS] MC configuration deSerialize succeeded";
                 mMcConfig->updateDone();
 
                 if (mCheckNextMcConfig) {
@@ -338,9 +340,11 @@ void Commands::processPacket(QByteArray data)
                         diff.removeAll("foc_offsets_voltage_undriven__2");
                     }
 
+                    qDebug() << "[COMMANDS] MC config difference count:" << diff.size();
                     emit mcConfigCheckResult(diff);
                 }
             } else {
+                qWarning() << "[COMMANDS] MC configuration deSerialize failed!";
                 emit deserializeConfigFailed(true, false);
             }
         }
@@ -1394,7 +1398,14 @@ void Commands::samplePrint(debug_sampling_mode mode, int sample_len, int dec, bo
 
 void Commands::getMcconf()
 {
-    if (mTimeoutMcconf > 0) {
+    getMcconfForce(false);
+}
+
+void Commands::getMcconfForce(bool force)
+{
+    qDebug() << "[COMMANDS] getMcconf called (force:" << force << "mTimeoutMcconf:" << mTimeoutMcconf << ")";
+    if (!force && mTimeoutMcconf > 0) {
+        qDebug() << "[COMMANDS] getMcconf skipped due to active timeout";
         return;
     }
 
@@ -1408,7 +1419,14 @@ void Commands::getMcconf()
 
 void Commands::getMcconfDefault()
 {
-    if (mTimeoutMcconf > 0) {
+    getMcconfDefaultForce(false);
+}
+
+void Commands::getMcconfDefaultForce(bool force)
+{
+    qDebug() << "[COMMANDS] getMcconfDefault called (force:" << force << "mTimeoutMcconf:" << mTimeoutMcconf << ")";
+    if (!force && mTimeoutMcconf > 0) {
+        qDebug() << "[COMMANDS] getMcconfDefault skipped due to active timeout";
         return;
     }
 
@@ -1422,11 +1440,13 @@ void Commands::getMcconfDefault()
 
 void Commands::setMcconf(bool check)
 {
+    qDebug() << "[COMMANDS] setMcconf called (check:" << check << ")";
     if (mMcConfig) {
         mMcConfigLast = *mMcConfig;
         VByteArray vb;
         vb.vbAppendInt8(COMM_SET_MCCONF);
         mMcConfig->serialize(vb);
+        qDebug() << "[COMMANDS] setMcconf emitting serialized payload size:" << vb.size();
         emitData(vb);
 
         if (check) {
@@ -1434,6 +1454,8 @@ void Commands::setMcconf(bool check)
         }
 
         emit mcConfigWriteSent(check);
+    } else {
+        qWarning() << "[COMMANDS] setMcconf: mMcConfig is null!";
     }
 }
 

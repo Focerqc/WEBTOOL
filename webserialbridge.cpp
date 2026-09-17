@@ -202,9 +202,13 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
                             p.rxQueue.push(value);
                             if (typeof bytesRx !== 'undefined') bytesRx += value.length;
                             if (typeof updateSerialHud === 'function') updateSerialHud();
-                            if (typeof window !== 'undefined' && window.__logToScreen && value.length <= 256) {
-                                var hexStr = Array.from(value).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
-                                window.__logToScreen('[SERIAL RX] (' + value.length + ' bytes): ' + hexStr, '#a5f3fc');
+                            if (typeof window !== 'undefined' && window.__logToScreen) {
+                                if (value.length <= 256) {
+                                    var hexStr = Array.from(value).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+                                    window.__logToScreen('[SERIAL RX] (' + value.length + ' bytes): ' + hexStr, '#a5f3fc');
+                                } else {
+                                    window.__logToScreen('[SERIAL RX] (' + value.length + ' bytes, large payload)', '#a5f3fc');
+                                }
                             }
 
                             if (p.rxCallback) {
@@ -222,7 +226,10 @@ EM_JS(int, js_webserial_open, (int portId, int baudRate, int dataBits, int stopB
                     }
                 } catch (err) {
                     console.warn("WebSerial read error:", err);
-                    break;
+                    if (typeof window !== 'undefined' && window.__logToScreen) {
+                        window.__logToScreen('[SERIAL READ ERROR] ' + (err.message || err), '#f87171');
+                    }
+                    await new Promise(function(resolve) { setTimeout(resolve, 100); });
                 } finally {
                     if (p.reader) {
                         try { p.reader.releaseLock(); } catch(e){}
@@ -311,13 +318,29 @@ EM_JS(int, js_webserial_write, (int portId, const uint8_t *data, int len), {
         var chunk = heap.slice(data, data + len);
         if (typeof bytesTx !== 'undefined') bytesTx += len;
         if (typeof updateSerialHud === 'function') updateSerialHud();
-        if (typeof window !== 'undefined' && window.__logToScreen && len <= 256) {
-            var hexStr = Array.from(chunk).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
-            window.__logToScreen('[SERIAL TX] (' + len + ' bytes): ' + hexStr, '#fef08a');
+        if (typeof window !== 'undefined' && window.__logToScreen) {
+            if (len <= 256) {
+                var hexStr = Array.from(chunk).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+                window.__logToScreen('[SERIAL TX] (' + len + ' bytes): ' + hexStr, '#fef08a');
+            } else {
+                window.__logToScreen('[SERIAL TX] (' + len + ' bytes, large payload)', '#fef08a');
+            }
         }
-        p.writer.write(chunk).catch(function(err) {
-            console.error("Async write error:", err);
+
+        // Sequential promise chaining to avoid overlapping WebSerial write operations
+        if (!p.writePromise) {
+            p.writePromise = Promise.resolve();
+        }
+        p.writePromise = p.writePromise.then(function() {
+            if (!p.writer || !p.isOpen) return;
+            return p.writer.write(chunk);
+        }).catch(function(err) {
+            console.error("WebSerial async write error:", err);
+            if (typeof window !== 'undefined' && window.__logToScreen) {
+                window.__logToScreen('[SERIAL TX ERROR] ' + (err.message || err), '#f87171');
+            }
         });
+
         return len;
     } catch (err) {
         console.error("WebSerial write exception:", err);

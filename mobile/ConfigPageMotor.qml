@@ -222,7 +222,9 @@ Item {
                 text: "Write"
 
                 onClicked: {
-                    mCommands.setMcconf(true)
+                    console.log("[MOTOR CFG] Write clicked, calling setMcconf(true)")
+                    VescIf.commands().setMcconf(true)
+                    VescIf.emitStatusMessage("Writing motor configuration...", true)
                 }
             }
 
@@ -232,7 +234,9 @@ Item {
                 text: "Read"
 
                 onClicked: {
-                    mCommands.getMcconf()
+                    console.log("[MOTOR CFG] Read clicked, calling getMcconfForce()")
+                    VescIf.commands().getMcconfForce()
+                    VescIf.emitStatusMessage("Reading motor configuration...", true)
                 }
             }
 
@@ -255,30 +259,36 @@ Item {
                     MenuItem {
                         text: "Read Default Settings"
                         onTriggered: {
-                            mCommands.getMcconfDefault()
+                            console.log("[MOTOR CFG] Read Default Settings clicked")
+                            VescIf.commands().getMcconfDefaultForce()
+                            VescIf.emitStatusMessage("Reading default motor configuration...", true)
                         }
                     }
                     MenuItem {
                         text: "Detect BLDC Parameters..."
                         onTriggered: {
+                            console.log("[MOTOR CFG] Opening Detect BLDC dialog")
                             detectBldc.openDialog()
                         }
                     }
                     MenuItem {
                         text: "Detect FOC Parameters..."
                         onTriggered: {
+                            console.log("[MOTOR CFG] Opening Detect FOC dialog")
                             detectFocParam.openDialog()
                         }
                     }
                     MenuItem {
                         text: "Detect FOC Hall Sensors..."
                         onTriggered: {
+                            console.log("[MOTOR CFG] Opening Detect FOC Hall dialog")
                             detectFocHall.openDialog()
                         }
                     }
                     MenuItem {
                         text: "Detect FOC Encoder..."
                         onTriggered: {
+                            console.log("[MOTOR CFG] Opening Detect FOC Encoder dialog")
                             detectFocEncoder.openDialog()
                         }
                     }
@@ -406,6 +416,34 @@ Item {
             tabBox.visible = subgroups.length > 1
 
             updateEditors()
+        }
+    }
+
+    Connections {
+        target: VescIf.mcConfig()
+        function onUpdated() {
+            console.log("[MOTOR CFG] mcConfig updated from VESC successfully, refreshing UI editors")
+            VescIf.emitStatusMessage("Motor configuration updated", true)
+            updateEditors()
+        }
+    }
+
+    Connections {
+        target: VescIf.commands()
+        function onDeserializeConfigFailed(isMc, isApp) {
+            if (isMc) {
+                console.error("[MOTOR CFG] Deserializing motor configuration failed!")
+                VescIf.emitStatusMessage("Motor config deserialization failed", false)
+            }
+        }
+        function onMcConfigCheckResult(diff) {
+            console.log("[MOTOR CFG] mcConfig check result diff size:", diff.length)
+            if (diff.length === 0) {
+                VescIf.emitStatusMessage("Motor configuration verified", true)
+            } else {
+                console.warn("[MOTOR CFG] mcConfig params not set:", diff.join(", "))
+                VescIf.emitStatusMessage("Motor config: " + diff.length + " params rejected", false)
+            }
         }
     }
 }

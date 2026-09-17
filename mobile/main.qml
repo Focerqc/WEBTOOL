@@ -616,7 +616,7 @@ ApplicationWindow {
             asynchronous: true
             sourceComponent: ConfigPageMotor {
                 anchors.fill: parent
-                dialogParent: mainSwipeView
+                dialogParent: appWindow.overlay
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 isHorizontal: mainIsHorizontal
@@ -633,7 +633,7 @@ ApplicationWindow {
             anchors.fill: parent
             asynchronous: true
             sourceComponent: ConfigPageApp {
-                dialogParent: mainSwipeView
+                dialogParent: appWindow.overlay
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
@@ -836,14 +836,16 @@ ApplicationWindow {
 
         property bool mcConfRx: false
         property bool appConfRx: false
+        property int retries: 0
 
         onTriggered: {
             if (VescIf.isPortConnected() && VescIf.getLastFwRxParams().hwTypeStr() === "VESC") {
-                if (!mcConfRx) {
+                if (!mcConfRx && retries < 10) {
                     mCommands.getMcconf()
+                    retries++
                 }
 
-                if (!appConfRx) {
+                if (!appConfRx && retries < 10) {
                     mCommands.getAppConf()
                 }
             }
@@ -1091,6 +1093,7 @@ ApplicationWindow {
             if (!VescIf.isPortConnected()) {
                 confTimer.mcConfRx = false
                 confTimer.appConfRx = false
+                confTimer.retries = 0
                 connected = false
                 fwReadCorrectly = false
             } else {
@@ -1152,6 +1155,7 @@ ApplicationWindow {
                     confTimer.restart()
                     confTimer.mcConfRx = false
                     confTimer.appConfRx = false
+                    confTimer.retries = 0
 
                     mCommands.getMcconf()
                     mCommands.getAppConf()
