@@ -47,6 +47,18 @@ void webfs_list_backups(WebFsListCallback callback, void *userData);
  */
 void webfs_read_backup(const char *subfolderName, WebFsReadCallback callback, void *userData);
 
+typedef void (*WebFsFileContentCallback)(const char *filename, const char *content, void *userData);
+
+/**
+ * @brief Trigger an immediate browser file download with the given filename, content, and MIME type.
+ */
+void webfs_download_file(const char *filename, const char *content, const char *mimeType);
+
+/**
+ * @brief Open browser native file selector to read an XML or text file, passing contents to callback.
+ */
+void webfs_open_file_dialog(const char *acceptExtensions, WebFsFileContentCallback callback, void *userData);
+
 #ifdef __cplusplus
 }
 #endif

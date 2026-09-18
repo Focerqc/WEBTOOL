@@ -268,6 +268,9 @@ public:
     Q_INVOKABLE void startWebBackup(int canId = -1, QString customName = "");
     Q_INVOKABLE void requestWebBackupList();
     Q_INVOKABLE void restoreFromWebBackup(QString subfolderName, int canId = -1);
+    Q_INVOKABLE bool isWasm() const;
+    Q_INVOKABLE bool exportXml(ConfigParams *cfg, QString configName, QString defaultFileName = QString());
+    Q_INVOKABLE void importXml(ConfigParams *cfg, QString configName);
 
     Q_INVOKABLE bool deserializeFailedSinceConnected();
 

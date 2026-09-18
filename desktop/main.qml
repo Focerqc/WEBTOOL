@@ -42,11 +42,47 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: qsTr("File")
-            Action { text: qsTr("Save Motor Configuration XML..."); onTriggered: motorConfSaveDialog.open() }
-            Action { text: qsTr("Load Motor Configuration XML"); onTriggered: motorConfLoadDialog.open() }
+            Action {
+                text: qsTr("Save Motor Configuration XML...")
+                onTriggered: {
+                    if (VescIf.isWasm()) {
+                        VescIf.exportXml(mMcConf, "MCConfiguration", "mcconf.xml")
+                    } else {
+                        motorConfSaveDialog.open()
+                    }
+                }
+            }
+            Action {
+                text: qsTr("Load Motor Configuration XML")
+                onTriggered: {
+                    if (VescIf.isWasm()) {
+                        VescIf.importXml(mMcConf, "MCConfiguration")
+                    } else {
+                        motorConfLoadDialog.open()
+                    }
+                }
+            }
             MenuSeparator {}
-            Action { text: qsTr("Save App Configuration XML..."); onTriggered: appConfSaveDialog.open() }
-            Action { text: qsTr("Load App Configuration XML"); onTriggered: appConfLoadDialog.open() }
+            Action {
+                text: qsTr("Save App Configuration XML...")
+                onTriggered: {
+                    if (VescIf.isWasm()) {
+                        VescIf.exportXml(mAppConf, "APPConfiguration", "appconf.xml")
+                    } else {
+                        appConfSaveDialog.open()
+                    }
+                }
+            }
+            Action {
+                text: qsTr("Load App Configuration XML")
+                onTriggered: {
+                    if (VescIf.isWasm()) {
+                        VescIf.importXml(mAppConf, "APPConfiguration")
+                    } else {
+                        appConfLoadDialog.open()
+                    }
+                }
+            }
             MenuSeparator {}
             Action { text: qsTr("Restart + Launch Mobile Tool"); onTriggered: Utility.launchMobileUi() }
             MenuSeparator {}

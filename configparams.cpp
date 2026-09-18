@@ -32,6 +32,7 @@
 #include <cmath>
 #include "utility.h"
 #include "lzokay/lzokay.hpp"
+#include "webfsbackupbridge.h"
 
 ConfigParams::ConfigParams(QObject *parent) : QObject(parent)
 {
@@ -1201,6 +1202,40 @@ bool ConfigParams::setXML(QXmlStreamReader &stream, QString configName)
 
 bool ConfigParams::saveXml(QString fileName, QString configName)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    QString xml = getXmlString(configName);
+    if (xml.isEmpty()) {
+        mXmlStatus = tr("Failed to generate XML");
+        return false;
+    }
+
+    QString hintName = fileName;
+    if (hintName.contains("/")) {
+        hintName = hintName.section('/', -1);
+    }
+    if (hintName.contains("\\")) {
+        hintName = hintName.section('\\', -1);
+    }
+    hintName.remove("file:");
+    while (hintName.startsWith("/")) hintName.remove(0, 1);
+
+    if (hintName.isEmpty() || hintName == ".xml") {
+        if (configName.contains("MC", Qt::CaseInsensitive)) {
+            hintName = "mcconf.xml";
+        } else if (configName.contains("APP", Qt::CaseInsensitive)) {
+            hintName = "appconf.xml";
+        } else {
+            hintName = "customconf.xml";
+        }
+    }
+    if (!hintName.endsWith(".xml", Qt::CaseInsensitive)) {
+        hintName += ".xml";
+    }
+
+    webfs_download_file(hintName.toUtf8().constData(), xml.toUtf8().constData(), "application/xml;charset=utf-8");
+    mXmlStatus = tr("OK");
+    return true;
+#else
     if (fileName.startsWith("file:/")) {
         fileName.remove(0, 6);
     }
@@ -1223,6 +1258,7 @@ bool ConfigParams::saveXml(QString fileName, QString configName)
 
     mXmlStatus = tr("OK");
     return true;
+#endif
 }
 
 bool ConfigParams::loadXml(QString fileName, QString configName)

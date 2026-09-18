@@ -254,14 +254,18 @@ Item {
                     MenuItem {
                         text: "Save XML"
                         onTriggered: {
-                            if (Utility.requestFilePermission()) {
-                                fileDialogSave.close()
-                                fileDialogSave.open()
+                            if (VescIf.isWasm()) {
+                                VescIf.exportXml(VescIf.appConfig(), "APPConfiguration", "appconf.xml")
                             } else {
-                                VescIf.emitMessageDialog(
-                                            "File Permissions",
-                                            "Unable to request file system permission.",
-                                            false, false)
+                                if (Utility.requestFilePermission()) {
+                                    fileDialogSave.close()
+                                    fileDialogSave.open()
+                                } else {
+                                    VescIf.emitMessageDialog(
+                                                "File Permissions",
+                                                "Unable to request file system permission.",
+                                                false, false)
+                                }
                             }
                         }
 
@@ -294,14 +298,18 @@ Item {
                     MenuItem {
                         text: "Load XML"
                         onTriggered: {
-                            if (Utility.requestFilePermission()) {
-                                fileDialogLoad.close()
-                                fileDialogLoad.open()
+                            if (VescIf.isWasm()) {
+                                VescIf.importXml(VescIf.appConfig(), "APPConfiguration")
                             } else {
-                                VescIf.emitMessageDialog(
-                                            "File Permissions",
-                                            "Unable to request file system permission.",
-                                            false, false)
+                                if (Utility.requestFilePermission()) {
+                                    fileDialogLoad.close()
+                                    fileDialogLoad.open()
+                                } else {
+                                    VescIf.emitMessageDialog(
+                                                "File Permissions",
+                                                "Unable to request file system permission.",
+                                                false, false)
+                                }
                             }
                         }
 

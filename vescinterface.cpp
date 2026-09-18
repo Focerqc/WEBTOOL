@@ -5508,6 +5508,82 @@ void VescInterface::restoreFromWebBackup(QString subfolderName, int canId)
     }, cbData);
 }
 
+bool VescInterface::isWasm() const
+{
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool VescInterface::exportXml(ConfigParams *cfg, QString configName, QString defaultFileName)
+{
+    if (!cfg) return false;
+    QString xml = cfg->getXmlString(configName);
+    if (xml.isEmpty()) {
+        emitStatusMessage(tr("Failed to generate XML"), false);
+        return false;
+    }
+
+    if (defaultFileName.trimmed().isEmpty()) {
+        if (configName.contains("MC", Qt::CaseInsensitive)) {
+            defaultFileName = "mcconf.xml";
+        } else if (configName.contains("APP", Qt::CaseInsensitive)) {
+            defaultFileName = "appconf.xml";
+        } else {
+            defaultFileName = "customconf.xml";
+        }
+    }
+    if (!defaultFileName.endsWith(".xml", Qt::CaseInsensitive)) {
+        defaultFileName += ".xml";
+    }
+
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    webfs_download_file(defaultFileName.toUtf8().constData(), xml.toUtf8().constData(), "application/xml;charset=utf-8");
+    emitStatusMessage(tr("Saved %1").arg(defaultFileName), true);
+    return true;
+#else
+    return false;
+#endif
+}
+
+void VescInterface::importXml(ConfigParams *cfg, QString configName)
+{
+    if (!cfg) return;
+
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    struct LoadCtx {
+        VescInterface *self;
+        ConfigParams *cfg;
+        QString configName;
+    };
+    auto ctx = new LoadCtx{this, cfg, configName};
+
+    webfs_open_file_dialog(".xml,text/xml,application/xml", [](const char *filename, const char *content, void *userData) {
+        auto d = static_cast<LoadCtx*>(userData);
+        if (d && d->cfg && content) {
+            QString xmlStr = QString::fromUtf8(content);
+            QString fn = QString::fromUtf8(filename ? filename : "config.xml");
+            bool ok = d->cfg->loadXmlString(xmlStr, d->configName);
+            if (ok) {
+                if (d->self) {
+                    d->self->emitStatusMessage(tr("Loaded %1 successfully").arg(fn), true);
+                    if (d->configName.contains("Custom", Qt::CaseInsensitive)) {
+                        emit d->self->customConfigLoadDone();
+                    }
+                }
+            } else {
+                if (d->self) {
+                    d->self->emitStatusMessage(tr("Failed to parse %1: %2").arg(fn).arg(d->cfg->xmlStatus()), false);
+                }
+            }
+        }
+        delete d;
+    }, ctx);
+#endif
+}
+
 bool VescInterface::deserializeFailedSinceConnected()
 {
     return mDeserialFailedMessageShown;
