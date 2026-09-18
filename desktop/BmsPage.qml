@@ -14,6 +14,13 @@ Item {
 
     property Commands mCommands: VescIf.commands()
 
+    Timer {
+        interval: 100
+        running: bmsPage.visible && VescIf.isPortConnected()
+        repeat: true
+        onTriggered: mCommands.bmsGetValues()
+    }
+
     SplitView {
         anchors.fill: parent
         orientation: Qt.Horizontal

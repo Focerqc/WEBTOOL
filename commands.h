@@ -180,6 +180,7 @@ public slots:
     void processPacket(QByteArray data);
 
     Q_INVOKABLE void getFwVersion();
+    Q_INVOKABLE void resetFwTimeout() { mTimeoutFwVer = 0; }
     void eraseNewApp(bool fwdCan, quint32 fwSize, HW_TYPE hwType, QString hwName);
     void eraseBootloader(bool fwdCan, HW_TYPE hwType, QString hwName);
     void writeNewAppData(QByteArray data, quint32 offset, bool fwdCan, HW_TYPE hwType, QString hwName);

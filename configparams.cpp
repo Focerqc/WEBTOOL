@@ -1245,6 +1245,25 @@ bool ConfigParams::loadXml(QString fileName, QString configName)
     return res;
 }
 
+QString ConfigParams::getXmlString(QString configName)
+{
+    emit savingXml();
+
+    QByteArray data;
+    QXmlStreamWriter stream(&data);
+    stream.setAutoFormatting(true);
+    getXML(stream, configName);
+
+    return QString::fromUtf8(data);
+}
+
+bool ConfigParams::loadXmlString(QString xmlStr, QString configName)
+{
+    QXmlStreamReader stream(xmlStr);
+    bool res = setXML(stream, configName);
+    return res;
+}
+
 QString ConfigParams::xmlStatus()
 {
     return mXmlStatus;

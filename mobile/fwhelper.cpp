@@ -235,20 +235,20 @@ bool FwHelper::uploadFirmware(QString filename, VescInterface *vesc,
 bool FwHelper::uploadFirmwareSingleShotTimer(QString filename, VescInterface *vesc,
                               bool isBootloader, bool checkName, bool fwdCan, QString BLfilename)
 {
-    bool res;
-    QTimer::singleShot(10, [this, &res, filename, vesc, isBootloader, checkName, fwdCan, BLfilename]() {
-        qDebug() << filename;
-        if(BLfilename.isEmpty()) {
-            res = uploadFirmware(filename, vesc, isBootloader, checkName, fwdCan);
-        } else {
-            res = uploadFirmware(BLfilename, vesc, true, checkName, fwdCan);
-            if(res) {
-                res = uploadFirmware(filename, vesc, isBootloader, checkName, fwdCan);
-            }
-        }
-        emit fwUploadRes(res, isBootloader);
+    Q_UNUSED(checkName);
+    if (!vesc) return false;
+
+    auto conn = std::make_shared<QMetaObject::Connection>();
+    *conn = connect(vesc, &VescInterface::fwUploadFinished, this, [this, conn, isBootloader](bool ok, const QString &) {
+        disconnect(*conn);
+        emit fwUploadRes(ok, isBootloader);
     });
-    return true;
+
+    if (BLfilename.isEmpty()) {
+        return vesc->fwUploadFromFile(filename, isBootloader, fwdCan);
+    } else {
+        return vesc->fwUploadQueued(filename, BLfilename, fwdCan);
+    }
 }
 
 QVariantMap FwHelper::getArchiveDirs()

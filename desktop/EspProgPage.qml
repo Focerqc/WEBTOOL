@@ -459,20 +459,24 @@ Item {
     }
 
     function scanIncludedFw() {
+        VescIf.reloadFirmwareResources()
         var list = []
         var root = "://res/firmwares_esp"
-        var dirs = Utility.listDirEntries(root, true)
-        for (var i = 0; i < dirs.length; i++) {
-            var d = dirs[i]
-            var path = root + "/" + d
-            if (Utility.fileExists(path + "/vesc_express.bin")) {
-                list.push({
-                    name: d.toUpperCase(),
-                    dir: path,
-                    app: path + "/vesc_express.bin",
-                    bl: path + "/bootloader.bin",
-                    part: path + "/partition-table.bin"
-                })
+        var chipDirs = Utility.listDirEntries(root, true)
+        for (var c = 0; c < chipDirs.length; c++) {
+            var chipPath = root + "/" + chipDirs[c]
+            var boardDirs = Utility.listDirEntries(chipPath, true)
+            for (var b = 0; b < boardDirs.length; b++) {
+                var path = chipPath + "/" + boardDirs[b]
+                if (Utility.fileExists(path + "/vesc_express.bin")) {
+                    list.push({
+                        name: chipDirs[c].toUpperCase() + ": " + boardDirs[b],
+                        dir: path,
+                        app: path + "/vesc_express.bin",
+                        bl: path + "/bootloader.bin",
+                        part: path + "/partition-table.bin"
+                    })
+                }
             }
         }
         includedFwModel = list
@@ -568,6 +572,10 @@ Item {
             isFlashing = isOngoing
             statusText = status
             progressValue = progress * 100.0
+        }
+        function onFwUploadFinished(success, message) {
+            isFlashing = false
+            statusText = message
         }
     }
 

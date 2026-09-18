@@ -61,6 +61,22 @@ Item {
             reloadArchive()
             enableDialog()
         }
+        onPackageInstallProgress: function(stepName, bytes, bytesTotal, percentage) {
+            dlProgress.value = percentage
+            dlDialog.title = stepName + " (" + Number(100.0 * percentage).toFixed(0) + "%)"
+        }
+        onPackageInstallFinished: function(success, message) {
+            enableDialog()
+            VescIf.emitMessageDialog("Install Package",
+                                     message ? message : (success ? "Installation Done!" : "Installation failed"),
+                                     success, false)
+        }
+        onPackageUninstallFinished: function(success, message) {
+            enableDialog()
+            VescIf.emitMessageDialog("Uninstall Package",
+                                     message ? message : (success ? "Uninstallation Done!" : "Uninstallation failed"),
+                                     success, false)
+        }
     }
 
     Component.onCompleted: {
@@ -154,32 +170,13 @@ Item {
                 text: "Uninstall Current"
                 Layout.fillWidth: true
                 onClicked: {
-                    disableDialog()
-                    workaroundTimerUninstall.start()
-                }
-
-                Timer {
-                    id: workaroundTimerUninstall
-                    interval: 0
-                    repeat: false
-                    running: false
-                    onTriggered: {
-                        var resLisp = mLoader.lispErase(16)
-                        var resQml = mLoader.qmlErase(16)
-                        Utility.sleepWithEventLoop(500)
-
-                        if (resLisp || resQml) {
-                            VescIf.reloadFirmware()
-                        }
-
-                        enableDialog()
-
-                        if (resLisp && resQml) {
-                            VescIf.emitMessageDialog("Uninstall Package",
-                                                     "Uninstallation Done!",
-                                                     true, false)
-                        }
+                    if (!VescIf.isPortConnected()) {
+                        VescIf.emitMessageDialog("Uninstall Package", "Not Connected", false, false)
+                        return
                     }
+                    disableDialog()
+                    dlDialog.title = "Uninstalling Package..."
+                    mLoader.uninstallPackage()
                 }
             }
 
@@ -252,11 +249,12 @@ Item {
         }
 
         installPkgCompatibleText.visible = !mLoader.shouldShowPackage(pkg)
-        workaroundTimerInstall.pkg = pkg
+        installFromPathDialog.currentPkg = pkg
         installFromPathDialog.open()
     }
 
     function disableDialog() {
+        dlProgress.value = 0
         dlDialog.title = "Processing..."
         dlDialog.open()
         column.enabled = false
@@ -283,8 +281,10 @@ Item {
         parent: dialogParent
 
         ProgressBar {
+            id: dlProgress
             anchors.fill: parent
-            indeterminate: visible
+            indeterminate: value <= 0 || value >= 1
+            value: 0
         }
     }
 
@@ -292,6 +292,7 @@ Item {
         title: "Install Package"
 
         id: installFromPathDialog
+        property var currentPkg: null
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
@@ -350,9 +351,18 @@ Item {
                     text: "Install Package"
 
                     onClicked: {
-                        disableDialog()
+                        var p = installFromPathDialog.currentPkg
                         installFromPathDialog.close()
-                        workaroundTimerInstall.start()
+                        if (!p || !p.compressedData) {
+                            VescIf.emitMessageDialog("Install Package", "Package data is missing.", false, false)
+                            return
+                        }
+                        disableDialog()
+                        dlDialog.title = "Preparing installation..."
+                        var started = mLoader.installVescPackage(p.compressedData)
+                        if (!started) {
+                            enableDialog()
+                        }
                     }
                 }
 
@@ -363,27 +373,6 @@ Item {
 
                     onClicked: {
                         installFromPathDialog.close()
-                    }
-                }
-            }
-
-            Timer {
-                property var pkg: []
-                id: workaroundTimerInstall
-                interval: 0
-                repeat: false
-                running: false
-                onTriggered: {
-                    if (mLoader.installVescPackage(pkg.compressedData)) {
-                        enableDialog()
-                        VescIf.emitMessageDialog("Install Package",
-                                                 "Installation Done!",
-                                                 true, false)
-                    } else {
-                        enableDialog()
-                        VescIf.emitMessageDialog("Install Package",
-                                                 "Installation failed",
-                                                 false, false)
                     }
                 }
             }

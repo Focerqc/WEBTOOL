@@ -149,6 +149,9 @@ public:
     bool fwUpload(QByteArray &newFirmware, bool isBootloader = false, bool fwdCan = false, bool isLzo = true, bool autoDisconnect = true);
     Q_INVOKABLE bool fwUpdate(QByteArray newFirmware) { return fwUpload(newFirmware, false, false, true, false); }
     Q_INVOKABLE bool fwUploadFromFile(QString path, bool isBootloader = false, bool fwdCan = false);
+    Q_INVOKABLE bool fwUploadQueued(QString fwPath, QString blPath = "", bool fwdCan = false);
+    Q_INVOKABLE bool reloadFirmwareResources();
+    bool fwUploadAsync(QByteArray appFw, QByteArray blFw = QByteArray(), bool fwdCan = false, bool isLzo = true, bool autoDisconnect = true);
     Q_INVOKABLE void fwUploadCancel();
     Q_INVOKABLE double getFwUploadProgress();
     Q_INVOKABLE QString getFwUploadStatus();
@@ -258,6 +261,14 @@ public:
     Q_INVOKABLE void confClearBackups();
     Q_INVOKABLE QString confBackupName(QString uuid);
 
+    // Web File System configuration backups
+    Q_INVOKABLE bool hasWebFsBackupApi();
+    Q_INVOKABLE QString getSavedBackupFolderName();
+    Q_INVOKABLE void selectBackupFolder();
+    Q_INVOKABLE void startWebBackup(int canId = -1, QString customName = "");
+    Q_INVOKABLE void requestWebBackupList();
+    Q_INVOKABLE void restoreFromWebBackup(QString subfolderName, int canId = -1);
+
     Q_INVOKABLE bool deserializeFailedSinceConnected();
 
     Q_INVOKABLE FW_RX_PARAMS getLastFwRxParams();
@@ -343,6 +354,12 @@ signals:
     void fwArchiveDlProgress(QString msg, double prog);
     void fwArchiveDownloaded(bool success);
     void configsDownloaded(bool success);
+    void fwUploadFinished(bool success, const QString &message);
+    void backupFolderSelected(QString folderName, bool ok);
+    void webBackupProgress(QString message, double progress);
+    void webBackupFinished(bool success, QString message, QString folderName);
+    void webBackupListReady(QVariantList backups);
+    void webRestoreFinished(bool success, QString message);
 
 public slots:
 
@@ -385,6 +402,10 @@ private slots:
     void startCustomConfigAsyncLoad(const FW_RX_PARAMS &params, const QString &confCacheDir);
     void handleCustomConfigChunk(int confInd, int lenConf, int ofsConf, const QByteArray &data);
     void handleCustomConfigTimeout();
+    void onEraseBootloaderResReceived(bool ok);
+    void onEraseNewAppResReceived(bool ok);
+    void onWriteNewAppDataResReceived(bool ok, bool hasOffset, quint32 offset);
+    void onFwTimeout();
 
 private:
     typedef enum {
@@ -456,11 +477,43 @@ private:
     bool mFwSupportsConfiguration;
 
     // FW Upload
+    enum class FwUploadStep {
+        Idle,
+        ErasingBootloader,
+        UploadingBootloader,
+        ErasingApp,
+        UploadingApp,
+        Finalizing
+    };
+
     bool mCancelSwdUpload;
     bool mCancelFwUpload;
     double mFwUploadProgress;
     QString mFwUploadStatus;
     bool mFwIsBootloader;
+
+    FwUploadStep m_fwStep;
+    bool m_fwIsOngoing;
+    bool m_fwFwdCan;
+    bool m_fwAutoDisconnect;
+    bool m_fwSupportsLzo;
+    bool m_fwIsLzo;
+    QByteArray m_fwBlData;
+    int m_fwBlAddr;
+    int m_fwBlStartAddr;
+    int m_fwBlTotalSize;
+    QByteArray m_fwAppData;
+    int m_fwAppAddr;
+    int m_fwAppStartAddr;
+    int m_fwAppTotalSize;
+    int m_fwRetries;
+    int m_fwLzoFailures;
+    QTimer *m_fwTimeoutTimer;
+
+    void sendNextBootloaderChunk();
+    void sendNextAppChunk();
+    void finalizeFwUpload();
+    void finishFwUpload(bool success, const QString &message);
 
     // Connections
     conn_t mLastConnType;

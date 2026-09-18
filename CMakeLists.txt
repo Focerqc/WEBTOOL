@@ -297,8 +297,8 @@ else()
     list(APPEND ROOT_HEADERS bleuartdummy.h)
 endif()
 if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "Emscripten" OR WASM)
-    list(APPEND ROOT_SOURCES webserialbridge.cpp qserialport_wasm.cpp wasm_serial_bridge.cpp)
-    list(APPEND ROOT_HEADERS webserialbridge.h qserialport_wasm.h wasm_serial_bridge.h)
+    list(APPEND ROOT_SOURCES webserialbridge.cpp qserialport_wasm.cpp wasm_serial_bridge.cpp webfsbackupbridge.cpp)
+    list(APPEND ROOT_HEADERS webserialbridge.h qserialport_wasm.h wasm_serial_bridge.h webfsbackupbridge.h)
 endif()
 
 # ---------------------------------------------------------------------------

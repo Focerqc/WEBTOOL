@@ -62,9 +62,13 @@ Item {
             reloadLatest()
             reloadArchive()
         }
+        function onConfigsDownloaded(success) {
+            downloadInProgress = false
+        }
     }
 
     Component.onCompleted: {
+        VescIf.reloadFirmwareResources()
         supportedFwStr = VescIf.getSupportedFirmwares().join(", ")
         reloadLatest()
         reloadArchive()
@@ -72,6 +76,7 @@ Item {
 
     // ---- Resource scanning functions ----
     function reloadLatest() {
+        VescIf.reloadFirmwareResources()
         if (VescIf.isPortConnected()) {
             var params = VescIf.getLastFwRxParams()
             updateHwList(params)
@@ -107,6 +112,16 @@ Item {
             }
             if (Utility.fileExists(path)) {
                 model.push({name: hwName, path: path})
+            }
+            if (model.length === 0) {
+                var c3Entries = Utility.listDirEntries("://res/firmwares_esp/esp32c3", true)
+                for (var i = 0; i < c3Entries.length; i++) {
+                    model.push({name: "ESP32-C3: " + c3Entries[i], path: "://res/firmwares_esp/esp32c3/" + c3Entries[i]})
+                }
+                var s3Entries = Utility.listDirEntries("://res/firmwares_esp/esp32s3", true)
+                for (var j = 0; j < s3Entries.length; j++) {
+                    model.push({name: "ESP32-S3: " + s3Entries[j], path: "://res/firmwares_esp/esp32s3/" + s3Entries[j]})
+                }
             }
         } else {
             var fwDir = "://res/firmwares"
@@ -379,12 +394,7 @@ Item {
     property bool confirmAllOverCan: false
 
     function doUpload() {
-        if (confirmBlPath !== "") {
-            VescIf.fwUploadFromFile(confirmBlPath, true, confirmAllOverCan)
-        }
-        if (confirmFwPath !== "") {
-            VescIf.fwUploadFromFile(confirmFwPath, false, confirmAllOverCan)
-        }
+        VescIf.fwUploadQueued(confirmFwPath, confirmBlPath, confirmAllOverCan)
     }
 
     // ---- Connections ----
@@ -398,6 +408,14 @@ Item {
                 uploadText = msg
             }
             uploadValue = progress * 100
+        }
+        function onFwUploadFinished(success, message) {
+            uploadOngoing = false
+            if (success) {
+                dlgTitle = "Firmware Upload"
+                dlgText = message
+                msgDialog.open()
+            }
         }
         function onFwRxChanged(rx, limited) {
             if (!rx) return

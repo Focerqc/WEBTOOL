@@ -30,15 +30,75 @@ Item {
     property BleUart mBle: VescIf.bleDevice()
     property Commands mCommands: VescIf.commands()
     property int animationSpeed: 500
+    property bool hasScannedOnConnect: false
+    property var pendingCanDevs: []
+    property int currentCanDev: -1
+
+    Timer {
+        id: canQueryTimeoutTimer
+        interval: 1200
+        repeat: false
+        onTriggered: {
+            if (currentCanDev !== -1) {
+                console.warn("[CAN_SCREEN] Timeout waiting for FW version from CAN ID:", currentCanDev)
+                VescIf.canTmpOverrideEnd()
+                currentCanDev = -1
+                mCommands.resetFwTimeout()
+                canQueryNextTimer.interval = 50
+                canQueryNextTimer.start()
+            }
+        }
+    }
+
+    Timer {
+        id: canQueryNextTimer
+        interval: 50
+        repeat: false
+        onTriggered: {
+            queryNextCanDevice()
+        }
+    }
+
+    function cancelPendingQueries() {
+        canQueryTimeoutTimer.stop()
+        canQueryNextTimer.stop()
+        if (currentCanDev !== -1) {
+            VescIf.canTmpOverrideEnd()
+            currentCanDev = -1
+            mCommands.resetFwTimeout()
+        }
+        pendingCanDevs = []
+    }
+
+    function queryNextCanDevice() {
+        if (!VescIf.isPortConnected()) {
+            cancelPendingQueries()
+            return
+        }
+
+        if (pendingCanDevs.length === 0) {
+            currentCanDev = -1
+            console.log("[CAN_SCREEN] All CAN device names resolved successfully.")
+            return
+        }
+
+        currentCanDev = pendingCanDevs.shift()
+        console.log("[CAN_SCREEN] Querying FW version for CAN ID:", currentCanDev)
+        VescIf.canTmpOverride(true, currentCanDev)
+        mCommands.resetFwTimeout()
+        mCommands.getFwVersion()
+        canQueryTimeoutTimer.restart()
+    }
 
     Component.onCompleted: {
         scanButton.enabled = VescIf.isPortConnected()
     }
 
     function scanIfEmpty() {
-        if (canList.count == 0 &&
+        if (!hasScannedOnConnect &&
                 VescIf.isPortConnected() &&
                 scanButton.enabled) {
+            hasScannedOnConnect = true
             scanButton.clicked()
         }
     }
@@ -94,6 +154,8 @@ Item {
 
         onTriggered: {
             if (!VescIf.isPortConnected()) {
+                hasScannedOnConnect = false
+                cancelPendingQueries()
                 mCommands.setSendCan(false, -1)
                 canList.currentIndex = 0;
                 canModel.clear()
@@ -104,9 +166,11 @@ Item {
             }
 
             if (VescIf.scanCanOnConnect() &&
-                    scanButton.enabled && canList.count == 0 &&
+                    !hasScannedOnConnect &&
+                    scanButton.enabled &&
                     VescIf.isPortConnected() &&
                     VescIf.fwRx() && VescIf.customConfigRxDone()) {
+                hasScannedOnConnect = true
                 scanButton.clicked()
             }
         }
@@ -175,11 +239,12 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         onClicked: {
+                            cancelPendingQueries()
                             canList.currentIndex = index
-                            if(index === 0){
-                                mCommands.setSendCan(false,0)
-                            }else{
-                                mCommands.setSendCan(true,ID)
+                            if (index === 0) {
+                                mCommands.setSendCan(false, 0)
+                            } else {
+                                mCommands.setSendCan(true, parseInt(ID))
                             }
                         }
                     }
@@ -245,6 +310,7 @@ Item {
             enabled: false
             Layout.fillWidth: true
             onClicked: {
+                cancelPendingQueries()
                 scanButton.enabled = false
                 canModel.clear()
 
@@ -301,6 +367,10 @@ Item {
 
         function onPortConnectedChanged() {
             scanButton.enabled = VescIf.isPortConnected()
+            if (!VescIf.isPortConnected()) {
+                hasScannedOnConnect = false
+                cancelPendingQueries()
+            }
         }
     }
 
@@ -314,13 +384,11 @@ Item {
 
             scanButton.enabled = true
             scanButton.text = qsTr("Scan")
+            cancelPendingQueries()
 
             if (VescIf.isPortConnected()) {
                 canModel.clear()
                 var params = VescIf.getLastFwRxParams()
-                if (params.major === -1) {
-                    params = Utility.getFwVersionBlockingCan(VescIf, -1)
-                }
                 var name = params.hw
                 var theme = "qrc" + Utility.getThemePath()
                 var devicePath = theme + "icons/motor_side.png"
@@ -353,39 +421,18 @@ Item {
                 name = name.replace("_", " ")
 
                 canModel.append({"name": name,
-                                    "ID": "LOCAL",
-                                    "deviceIconPath": devicePath,
-                                    "logoIconPath": logoPath})
-                for (var i = 0;i < devs.length;i++) {
-                    params = Utility.getFwVersionBlockingCan(VescIf, devs[i])
-                    name = params.hw
-                    if (params.hwTypeStr() === "VESC") { //is a motor
-                        devicePath = theme + "icons/motor_side.png"
-                        if (params.fwName.length !== 0) {
-                            name = params.hw + "-" + params.fwName
-                        } else {
-                            name = params.hw
-                        }
-                    } else if (params.hwTypeStr() === "VESC BMS") { //is a bms
-                        devicePath = theme + "icons/icons8-battery-100.png"
-                        if (params.fwName.length !== 0) {
-                            name = params.hw + "-" + params.fwName
-                        } else {
-                            name = params.hw
-                        }
-                    } else {
-                        devicePath = theme + "icons/Electronics-96.png"
-                        if (params.fwName.length !== 0) {
-                            name = params.hw + "-" + params.fwName
-                        } else {
-                            name = params.hw
-                        }
-                    }
-                    name = name.replace("_", " ")
-                    canModel.append({"name": name,
-                                        "ID": devs[i].toString(),
-                                        "deviceIconPath": devicePath,
-                                        "logoIconPath": logoPath})
+                                 "ID": "LOCAL",
+                                 "deviceIconPath": devicePath,
+                                 "logoIconPath": logoPath})
+
+                var devIds = []
+                for (var i = 0; i < devs.length; i++) {
+                    var devId = devs[i]
+                    devIds.push(devId)
+                    canModel.append({"name": "CAN Device " + devId,
+                                     "ID": devId.toString(),
+                                     "deviceIconPath": theme + "icons/Electronics-96.png",
+                                     "logoIconPath": logoPath})
                 }
 
                 canList.currentIndex = 0
@@ -397,8 +444,60 @@ Item {
                 }
 
                 selectDeviceInList()
+
+                if (devIds.length > 0) {
+                    pendingCanDevs = devIds
+                    canQueryNextTimer.interval = 50
+                    canQueryNextTimer.start()
+                }
             } else {
                 VescIf.emitStatusMessage("Device not connected", false)
+            }
+        }
+
+        function onFwVersionReceived(params) {
+            if (currentCanDev !== -1) {
+                canQueryTimeoutTimer.stop()
+                var devId = currentCanDev
+                currentCanDev = -1
+                VescIf.canTmpOverrideEnd()
+
+                console.log("[CAN_SCREEN] Received FW version for CAN ID:", devId,
+                            "hw:", params.hw, "fwName:", params.fwName, "hwType:", params.hwTypeStr())
+
+                var theme = "qrc" + Utility.getThemePath()
+                var devicePath = theme + "icons/Electronics-96.png"
+                var name = (params && params.hw && params.hw.length > 0) ? params.hw : ("CAN Device " + devId)
+
+                if (params && params.hwTypeStr() === "VESC") {
+                    devicePath = theme + "icons/motor_side.png"
+                    if (params.fwName && params.fwName.length !== 0) {
+                        name = params.hw + "-" + params.fwName
+                    }
+                } else if (params && params.hwTypeStr() === "VESC BMS") {
+                    devicePath = theme + "icons/icons8-battery-100.png"
+                    if (params.fwName && params.fwName.length !== 0) {
+                        name = params.hw + "-" + params.fwName
+                    }
+                } else {
+                    devicePath = theme + "icons/Electronics-96.png"
+                    if (params.fwName && params.fwName.length !== 0) {
+                        name = params.hw + "-" + params.fwName
+                    }
+                }
+
+                name = name.replace("_", " ")
+
+                for (var i = 0; i < canModel.count; i++) {
+                    if (canModel.get(i).ID === devId.toString()) {
+                        canModel.setProperty(i, "name", name)
+                        canModel.setProperty(i, "deviceIconPath", devicePath)
+                        break
+                    }
+                }
+
+                canQueryNextTimer.interval = 50
+                canQueryNextTimer.start()
             }
         }
     }

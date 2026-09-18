@@ -93,6 +93,9 @@ ApplicationWindow {
             Action { text: qsTr("Parameter Editor FW"); onTriggered: {} }
             Action { text: qsTr("Parameter Editor CustomConf0"); onTriggered: {} }
             Action { text: qsTr("Export Configuration Parser"); onTriggered: {} }
+            MenuSeparator {}
+            Action { text: qsTr("SWD Programmer"); onTriggered: pageStack.loadPage("SwdProgPage.qml") }
+            Action { text: qsTr("ESP Programmer"); onTriggered: pageStack.loadPage("EspProgPage.qml") }
         }
         Menu {
             title: qsTr("Help")
@@ -300,11 +303,12 @@ ApplicationWindow {
                                             spacing: 4
 
                                             Label {
-                                                text: model.canId < 0 ? "Local VESC" : ("ID: " + model.canId)
+                                                text: model.name ? model.name : (model.canId < 0 ? "Local VESC" : ("ID: " + model.canId))
                                                 font.pointSize: 12
                                                 font.family: "Roboto"
                                                 color: Utility.getAppHexColor("lightText")
                                                 Layout.fillWidth: true
+                                                elide: Text.ElideRight
                                             }
                                         }
 
@@ -1017,7 +1021,7 @@ ApplicationWindow {
         addPage("Sampled Data", "icons/Line Chart-96.png", "", false, true, "SampledDataPage.qml", "data_sampled", devShowAllPages)
         addPage("Experiment Plot", "icons/rt_off.png", "", false, true, "ExperimentPlotPage.qml", "data_experiment", devShowAllPages)
         addPage("IMU Data", "icons/Gyroscope-96.png", "", false, true, "ImuPage.qml", "data_imu", false)
-        addPage("BMS Data", "icons/icons8-battery-100.png", "", false, true, "BmsPage.qml", "data_bms", false)
+        addPage("BMS Data", "icons/icons8-battery-100.png", "", false, true, "BmsPage.qml", "data_bms", true)
         addPage("Log Analysis", "icons/Waypoint Map-96.png", "", false, true, "LogAnalysisPage.qml", "data_log", true)
         addPage("Motor Analysis", "icons/motor.png", "", false, true, "MotorComparisonPage.qml", "motor_comparison", true)
 
@@ -1176,6 +1180,32 @@ ApplicationWindow {
                 _canScanAccum = 0
                 if (VescIf.isPortConnected() && canModel.count <= 1 && VescIf.fwRx()) {
                     mCommands.pingCan()
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: mCommands
+        function onPingCanRx(devs, isTimeout) {
+            if (!VescIf.isPortConnected()) {
+                canModel.clear()
+                canModel.append({ canId: -1, name: "Local VESC" })
+                return
+            }
+            var curCanId = mCommands.getSendCan() ? mCommands.getCanSendId() : -1
+            canModel.clear()
+            var localParams = VescIf.getLastFwRxParams()
+            var localName = "Local: " + (localParams && localParams.hw ? localParams.hw : "VESC")
+            canModel.append({ canId: -1, name: localName })
+            for (var i = 0; i < devs.length; i++) {
+                var d = devs[i]
+                canModel.append({ canId: d, name: "ID: " + d })
+            }
+            for (var j = 0; j < canModel.count; j++) {
+                if (canModel.get(j).canId === curCanId) {
+                    canList.currentIndex = j
+                    break
                 }
             }
         }

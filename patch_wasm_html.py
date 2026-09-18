@@ -35,22 +35,31 @@ def patch_html(build_dir="build-wasm"):
 
     # 1. Clean Viewport Styling for Mobile (480px) and Desktop (100vw) - NO BORDERS, NO ROUNDED CORNERS
     viewport_css = """<style>
-    body {
+    html, body {
       margin: 0;
       padding: 0;
-      overflow-x: hidden;
+      width: 100%;
+      height: 100%;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
       background-color: #121212 !important;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
       align-items: center;
-      height: 100vh;
-      overflow-y: hidden;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
     }
     #qt-container.viewport-mobile {
       max-width: 480px;
       width: 100%;
-      height: calc(100vh - 42px);
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 0;
       margin: 0 auto;
       position: relative;
       overflow: hidden;
@@ -62,7 +71,9 @@ def patch_html(build_dir="build-wasm"):
     #qt-container.viewport-desktop {
       max-width: 100vw !important;
       width: 100vw !important;
-      height: calc(100vh - 42px) !important;
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 0;
       margin: 0 !important;
       border: none !important;
       border-radius: 0 !important;
@@ -151,10 +162,17 @@ def patch_html(build_dir="build-wasm"):
         'const instance = window.Module = await qtLoad('
     )
 
+    # Replace viewport meta tag with mobile safe-area cover
+    content = re.sub(
+        r'<meta name="viewport"[^>]*>',
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>',
+        content
+    )
+
     # 3. Inject HUD, Web Serial controls, and bridge scripts
     hud_html = """
     <!-- VESC Tool WASM Diagnostics Bottom Bar -->
-    <div id="vesc-diagnostics-bar" style="z-index:100000;position:relative;pointer-events:auto;width:100%;height:42px;flex-shrink:0;background:rgba(15,23,42,0.98);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;border-top:1px solid #0284c7;display:flex;align-items:center;justify-content:space-between;padding:0 10px;box-sizing:border-box;box-shadow:0 -2px 10px rgba(0,0,0,0.5);user-select:none;">
+    <div id="vesc-diagnostics-bar" style="z-index:100000;position:relative;pointer-events:auto;width:100%;height:42px;padding-bottom:env(safe-area-inset-bottom, 0px);flex-shrink:0;box-sizing:content-box;background:rgba(15,23,42,0.98);backdrop-filter:blur(6px);color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;border-top:1px solid #0284c7;display:flex;align-items:center;justify-content:space-between;padding-left:10px;padding-right:10px;box-shadow:0 -2px 10px rgba(0,0,0,0.5);user-select:none;">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow:visible;height:100%;position:relative;z-index:100000;pointer-events:auto;">
         <span style="color:#38bdf8;font-weight:bold;white-space:nowrap;">🛠️ VESC Tool WASM</span>
         <button id="btn-webserial-connect" type="button" onclick="window.toggleWebSerial()" style="position:relative;z-index:100002;pointer-events:auto;background:#0284c7;border:1px solid #0369a1;color:#ffffff;padding:2px 8px;font-size:11px;font-weight:600;border-radius:3px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">

@@ -32,6 +32,11 @@
 #include "vesctasks.h"
 #include "utility.h"
 #include "heatshrink/heatshrinkif.h"
+#include "hexfile.h"
+#include "webfsbackupbridge.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <memory>
 
 #ifdef HAS_SERIALPORT
@@ -66,6 +71,7 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     sInstance = this;
 #if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
     wasm_serial_bridge_init();
+    webfs_init();
 #endif
     mMcConfig = new ConfigParams(this);
     mAppConfig = new ConfigParams(this);
@@ -121,6 +127,31 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     connect(m_customConfigTimeoutTimer, &QTimer::timeout, this, &VescInterface::handleCustomConfigTimeout);
     connect(mCommands, &Commands::customConfigChunkRx, this, &VescInterface::handleCustomConfigChunk);
 
+    m_fwStep = FwUploadStep::Idle;
+    m_fwIsOngoing = false;
+    m_fwFwdCan = false;
+    m_fwAutoDisconnect = false;
+    m_fwSupportsLzo = false;
+    m_fwIsLzo = true;
+    m_fwBlAddr = 0;
+    m_fwBlStartAddr = 0;
+    m_fwBlTotalSize = 0;
+    m_fwAppAddr = 0;
+    m_fwAppStartAddr = 0;
+    m_fwAppTotalSize = 0;
+    m_fwRetries = 0;
+    m_fwLzoFailures = 0;
+    m_fwTimeoutTimer = new QTimer(this);
+    m_fwTimeoutTimer->setSingleShot(true);
+    connect(m_fwTimeoutTimer, &QTimer::timeout, this, &VescInterface::onFwTimeout);
+    connect(mCommands, &Commands::eraseBootloaderResReceived, this, &VescInterface::onEraseBootloaderResReceived);
+    connect(mCommands, &Commands::eraseNewAppResReceived, this, &VescInterface::onEraseNewAppResReceived);
+    connect(mCommands, &Commands::writeNewAppDataResReceived, this, &VescInterface::onWriteNewAppDataResReceived);
+
+    QTimer::singleShot(250, this, [this]() {
+        reloadFirmwareResources();
+    });
+
     mLastConnType = static_cast<conn_t>(mSettings.value("connection_type", CONN_NONE).toInt());
     mLastTcpServer = mSettings.value("tcp_server", "127.0.0.1").toString();
     mLastTcpPort = mSettings.value("tcp_port", 65102).toInt();
@@ -142,11 +173,7 @@ VescInterface::VescInterface(QObject *parent) : QObject(parent)
     mCanTmpFwdSendCanLast = false;
     mCanTmpFwdIdLast = -1;
 
-#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
-    mIgnoreCustomConfigs = true;
-#else
     mIgnoreCustomConfigs = false;
-#endif
     mIgnoreTestVersion = false;
 
     mFwSwapDone = false;
@@ -1416,182 +1443,113 @@ bool VescInterface::fwEraseBootloader(bool fwdCan)
 
 bool VescInterface::fwUpload(QByteArray &newFirmware, bool isBootloader, bool fwdCan, bool isLzo, bool autoDisconnect)
 {
-    newFirmware = Utility::removeFirmwareHeader(newFirmware);
-
-    mIsLastFwBootloader = isBootloader;
-    mFwUploadProgress = 0.0;
-    mCancelFwUpload = false;
-
-    if (fwdCan) {
-        FW_RX_PARAMS fwParamsLocal;
-        Utility::getFwVersionBlocking(this, &fwParamsLocal);
-        if (fwParamsLocal.hw.isEmpty()) {
-            emitMessageDialog("Firmware Upload", "Could not read hardware version", false, false);
-            mFwUploadStatus = "Read HW version failed";
-            mFwUploadProgress = -1.0;
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-            return false;
-        }
-
-        if (fwParamsLocal.hwType == HW_TYPE_VESC) {
-            if (mCommands->getSendCan()) {
-                emitMessageDialog("Firmware Upload",
-                                  "CAN forwarding must be disabled when uploading firmware to "
-                                  "all VESCs at the same time.", false, false);
-                mFwUploadStatus = "CAN check failed";
-                mFwUploadProgress = -1.0;
-                emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-                return false;
-            }
-
-            mFwUploadStatus = "Scanning CAN bus...";
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
-            auto devs = scanCan();
-
-            bool ignoreBefore = mIgnoreCanChange;
-            mIgnoreCanChange = true;
-
-            for (const auto &d : devs) {
-                mCommands->setSendCan(true, d);
-                FW_RX_PARAMS fwParamsCan;
-                Utility::getFwVersionBlocking(this, &fwParamsCan);
-                if (fwParamsCan.hwType == HW_TYPE_VESC && fwParamsLocal.hw != fwParamsCan.hw) {
-                    emitMessageDialog("Firmware Upload",
-                                      "All VESCs on the CAN-bus must have the same hardware version to upload "
-                                      "firmware to all of them at the same time. You must update them individually.",
-                                      false, false);
-                    mCommands->setSendCan(false);
-                    mIgnoreCanChange = ignoreBefore;
-
-                    mFwUploadStatus = "CAN check failed";
-                    mFwUploadProgress = -1.0;
-                    emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-
-                    return false;
-                }
-            }
-
-            mCommands->setSendCan(false);
-            mIgnoreCanChange = ignoreBefore;
-        }
-    }
-
     if (isBootloader) {
-        if (mCommands->getLimitedSupportsEraseBootloader()) {
-            mFwUploadStatus = "Erasing bootloader";
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
-            if (!fwEraseBootloader(fwdCan)) {
-                mFwUploadStatus = "Erasing bootloader failed";
-                mFwUploadProgress = -1.0;
-                emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-                return false;
-            }
-        }
+        QByteArray empty;
+        return fwUploadAsync(empty, newFirmware, fwdCan, isLzo, false);
     } else {
-        mFwUploadStatus = "Erasing buffer";
-        emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
-        if (!fwEraseNewApp(fwdCan, quint32(newFirmware.size()))) {
-            mFwUploadStatus = "Erasing buffer failed";
-            mFwUploadProgress = -1.0;
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-            return false;
-        }
+        QByteArray empty;
+        return fwUploadAsync(newFirmware, empty, fwdCan, isLzo, autoDisconnect);
+    }
+}
+
+bool VescInterface::fwUploadAsync(QByteArray appFw, QByteArray blFw, bool fwdCan, bool isLzo, bool autoDisconnect)
+{
+    if (!isPortConnected()) {
+        emitMessageDialog("Firmware Upload", "Not connected to device.", false, false);
+        return false;
     }
 
-    bool supportsLzo = mCommands->getLimitedCompatibilityCommands().
-            contains(int(COMM_WRITE_NEW_APP_DATA_LZO));
-
-    if (mLastFwParams.hwType != HW_TYPE_VESC) {
-        supportsLzo = false;
+    if (m_fwIsOngoing) {
+        emitMessageDialog("Firmware Upload", "Firmware upload is already in progress.", false, false);
+        return false;
     }
 
-    auto writeChunk = [this, &fwdCan](uint32_t addr, QByteArray chunk, bool fwIsLzo, quint16 decompressedLen) {
-        for (int i = 0;i < 3;i++) {
-            int res = -10;
+    if (appFw.isEmpty() && blFw.isEmpty()) {
+        emitMessageDialog("Firmware Upload", "No firmware data to upload.", false, false);
+        return false;
+    }
 
-            if (fwIsLzo) {
-                mCommands->writeNewAppDataLzo(chunk, addr, decompressedLen, fwdCan);
-            } else {
-                mCommands->writeNewAppData(chunk, addr, fwdCan, mLastFwParams.hwType, mLastFwParams.hw);
-            }
+    if (fwdCan && mCommands->getSendCan()) {
+        emitMessageDialog("Firmware Upload",
+                          "CAN forwarding must be disabled when uploading firmware to "
+                          "all VESCs at the same time.", false, false);
+        mFwUploadStatus = "CAN check failed";
+        mFwUploadProgress = -1.0;
+        emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
+        return false;
+    }
 
-            runTree(Group{SignalWaitTaskItem([this, &res](SignalWaitTask &task) {
-                task.setTimeout(3000);
-                task.connectSignal(mCommands, &Commands::writeNewAppDataResReceived,
-                                   [&res](bool ok, bool, quint32) { res = ok ? 1 : -1; });
-                return SetupResult::Continue;
-            })});
+    m_fwBlData.clear();
+    m_fwBlAddr = 0;
+    m_fwBlStartAddr = 0;
+    m_fwBlTotalSize = 0;
 
-            if (res != 1) {
-                qDebug() << "Write chunk failed:" << res << "LZO:" << fwIsLzo << "Addr:" << addr << "Size:" << chunk.size();
-            }
-
-            if (res != -10) {
-                return res;
-            }
-        }
-
-        return -20;
-    };
-
-    int addr = 0;
-
-    if (isBootloader) {
+    if (!blFw.isEmpty()) {
+        m_fwBlData = Utility::removeFirmwareHeader(blFw);
+        int addr = 0;
         switch (mLastFwParams.hwType) {
         case HW_TYPE_VESC:
             addr += (1024 * 128 * 3);
             break;
-
         case HW_TYPE_VESC_BMS:
             addr += 0x0803E000 - 0x08020000;
             break;
-
-        case HW_TYPE_CUSTOM_MODULE: {
+        case HW_TYPE_CUSTOM_MODULE:
             if (mLastFwParams.hw == "hm1") {
                 addr += 0x0803E000 - 0x08020000;
             } else {
                 addr += 0x0801E000 - 0x08010000;
             }
-        } break;
+            break;
         }
+        m_fwBlAddr = addr;
+        m_fwBlStartAddr = addr;
+        m_fwBlTotalSize = m_fwBlData.size();
     }
 
-    int startAddr = addr;
-    int szTot = newFirmware.size();
-    int uploadSize = 2;
-    int compChunks = 0;
-    int nonCompChunks = 0;
-    int skipChunks = 0;
+    m_fwAppData.clear();
+    m_fwAppAddr = 0;
+    m_fwAppStartAddr = 0;
+    m_fwAppTotalSize = 0;
+    m_fwSupportsLzo = false;
 
-    bool useHeatshrink = false;
-    if (szTot > 393208 && szTot < 700000) { // If fw is much larger it is probably for the esp32
-        useHeatshrink = true;
-        qDebug() << "Firmware is big, using heatshrink compression library";
-        int szOld = szTot;
-        HeatshrinkIf hs;
-        newFirmware = hs.encode(newFirmware);
-        szTot = newFirmware.size();
-        qDebug() << "New size:" << szTot << "(" << 100.0 * (double)szTot / (double)szOld << "%)";
-        supportsLzo = false;
+    if (!appFw.isEmpty()) {
+        m_fwAppData = Utility::removeFirmwareHeader(appFw);
+        int szTot = m_fwAppData.size();
 
-        if (szTot > 393208) {
+        m_fwSupportsLzo = mCommands->getLimitedCompatibilityCommands().contains(int(COMM_WRITE_NEW_APP_DATA_LZO));
+        if (mLastFwParams.hwType != HW_TYPE_VESC) {
+            m_fwSupportsLzo = false;
+        }
+
+        bool useHeatshrink = false;
+        if (szTot > 393208 && szTot < 700000) {
+            useHeatshrink = true;
+            qDebug() << "Firmware is big, using heatshrink compression library";
+            int szOld = szTot;
+            HeatshrinkIf hs;
+            m_fwAppData = hs.encode(m_fwAppData);
+            szTot = m_fwAppData.size();
+            qDebug() << "New size:" << szTot << "(" << 100.0 * (double)szTot / (double)szOld << "%)";
+            m_fwSupportsLzo = false;
+
+            if (szTot > 393208) {
+                emitMessageDialog(tr("Firmware too big"),
+                                  tr("The firmware you are trying to upload is too large for the "
+                                     "bootloader even after compression."), false);
+                return false;
+            }
+        }
+
+        if (szTot > 5000000) {
             emitMessageDialog(tr("Firmware too big"),
-                              tr("The firmware you are trying to upload is too large for the "
-                                 "bootloader even after compression."), false);
+                              tr("The firmware you are trying to upload is unreasonably "
+                                 "large, most likely it is an invalid file"), false);
             return false;
         }
-    }
 
-    if (szTot > 5000000) {
-        emitMessageDialog(tr("Firmware too big"),
-                          tr("The firmware you are trying to upload is unreasonably "
-                             "large, most likely it is an invalid file"), false);
-        return false;
-    }
-
-    if (!isBootloader) {
-        quint16 crc = Packet::crc16((const unsigned char*)newFirmware.constData(),
-                                    uint32_t(newFirmware.size()));
+        quint16 crc = Packet::crc16((const unsigned char*)m_fwAppData.constData(),
+                                    uint32_t(m_fwAppData.size()));
         VByteArray sizeCrc;
         if (useHeatshrink) {
             uint32_t szShift = 0xCC;
@@ -1602,130 +1560,336 @@ bool VescInterface::fwUpload(QByteArray &newFirmware, bool isBootloader, bool fw
             sizeCrc.vbAppendUint32(szTot);
         }
         sizeCrc.vbAppendUint16(crc);
-        newFirmware.prepend(sizeCrc);
+        m_fwAppData.prepend(sizeCrc);
+
+        m_fwAppAddr = 0;
+        m_fwAppStartAddr = 0;
+        m_fwAppTotalSize = m_fwAppData.size();
     }
 
-    int lzoFailures = 0;
-    const int chunkSize = 384;
-    while (newFirmware.size() > 0) {
-        if (mCancelFwUpload) {
-            mFwUploadProgress = -1.0;
-            mFwUploadStatus = "Upload cancelled";
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-            return false;
-        }
+    mCancelFwUpload = false;
+    m_fwIsOngoing = true;
+    m_fwFwdCan = fwdCan;
+    m_fwAutoDisconnect = autoDisconnect;
+    m_fwIsLzo = isLzo;
+    m_fwRetries = 0;
+    m_fwLzoFailures = 0;
+    mFwUploadProgress = 0.0;
 
-        int sz = newFirmware.size() > chunkSize ? chunkSize : newFirmware.size();
-
-        QByteArray in = newFirmware.mid(0, sz);
-
-        bool hasData = false;
-        for (const auto &b : in) {
-            if (b != (char)0xff) {
-                hasData = true;
-                break;
-            }
-        }
-
-        int res = 1;
-        if (hasData) {
-            std::size_t outMaxSize = chunkSize + chunkSize / 16 + 64 + 3;
-            unsigned char out[1000];
-            std::size_t out_len = sz;
-
-            if (isLzo && supportsLzo) {
-                lzokay::EResult error = lzokay::compress((const uint8_t*)in.constData(), sz, out,outMaxSize, out_len);
-                if (error < lzokay::EResult::Success) {
-                    qWarning() << "LZO Compress Error" << int(error);
-                    isLzo = false;
-                }
-            }
-
-            if (isLzo && supportsLzo && (out_len + 2) < uint32_t(sz)) {
-                compChunks++;
-                uploadSize += out_len + 2;
-                res = writeChunk(uint32_t(addr), QByteArray((const char*)out, int(out_len)),
-                                 true, uint16_t(sz));
-
-                if (res != 1) {
-                    res = writeChunk(uint32_t(addr), in, false, 0);
-
-                    // This actually can happen for at least one block of data, which is strange. Probably some
-                    // incompatibility between lzokay and minilzo. TODO: figure out what the problem is.
-                    if (res == 1) {
-                        qWarning() << "Writing LZO failed, but regular write was OK.";
-                        lzoFailures++;
-
-                        if (lzoFailures > 3) {
-                            qWarning() << "Lzo does not seem to work with the current FW, disabling it for this upload.";
-                            supportsLzo = false;
-                        }
-                    }
-                } else {
-                    lzoFailures = 0;
-                }
-            } else {
-                nonCompChunks++;
-                uploadSize += sz;
-                res = writeChunk(uint32_t(addr), in, false, 0);
-            }
+    if (!m_fwBlData.isEmpty()) {
+        if (mCommands->getLimitedSupportsEraseBootloader()) {
+            m_fwStep = FwUploadStep::ErasingBootloader;
+            mFwUploadStatus = "Erasing bootloader...";
+            emit fwUploadStatus(mFwUploadStatus, 0.0, true);
+            mCommands->eraseBootloader(m_fwFwdCan, mLastFwParams.hwType, mLastFwParams.hw);
+            m_fwTimeoutTimer->start(15000);
         } else {
-            skipChunks++;
+            m_fwStep = FwUploadStep::UploadingBootloader;
+            sendNextBootloaderChunk();
         }
-
-        newFirmware.remove(0, sz);
-        addr += sz;
-
-        if (res == 1) {
-            mFwUploadProgress = double(addr - startAddr) / double(szTot);
-            mFwUploadStatus = "Uploading ";
-            if (isBootloader) {
-                mFwUploadStatus += "Bootloader";
-            } else {
-                mFwUploadStatus += "Firmware";
-            }
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
-        } else {
-            QString msg = QString("Unknown failure: %1").arg(res);
-
-            if (res == -20) {
-                msg = "Firmware upload timed out";
-            } else if (res == -2) {
-                msg = "Write failed";
-            }
-
-            emitMessageDialog("Firmware Upload", msg, false, false);
-            mFwUploadProgress = -1.0;
-            mFwUploadStatus = msg;
-            emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, false);
-            return false;
-        }
-    }
-
-    mFwUploadProgress = -1.0;
-    mFwUploadStatus = "Upload done";
-    emit fwUploadStatus(mFwUploadStatus, 1.0, false);
-
-    if (supportsLzo && isLzo) {
-        qDebug() << "Uploaded:" << uploadSize << "Initial Size:" << szTot << "Compression Ratio:"
-                 << double(uploadSize) / double(szTot - skipChunks * chunkSize)
-                 << "\nCompressed chunks:" << compChunks << "Incompressible chunks:"
-                 << nonCompChunks << "\nSkipped chunks:" << skipChunks
-                 << "(" << skipChunks * chunkSize << "b )";
-    }
-
-    if (!isBootloader) {
-        mCommands->jumpToBootloader(fwdCan, mLastFwParams.hwType, mLastFwParams.hw);
-        Utility::sleepWithEventLoop(500);
-        if (autoDisconnect) disconnectPort();
+    } else if (!m_fwAppData.isEmpty()) {
+        m_fwStep = FwUploadStep::ErasingApp;
+        mFwUploadStatus = "Erasing buffer";
+        emit fwUploadStatus(mFwUploadStatus, 0.0, true);
+        mCommands->eraseNewApp(m_fwFwdCan, quint32(m_fwAppData.size()), mLastFwParams.hwType, mLastFwParams.hw);
+        m_fwTimeoutTimer->start(20000);
+    } else {
+        m_fwIsOngoing = false;
+        return false;
     }
 
     return true;
 }
 
+void VescInterface::sendNextBootloaderChunk()
+{
+    if (mCancelFwUpload) {
+        finishFwUpload(false, "Upload cancelled");
+        return;
+    }
+
+    if (m_fwBlData.isEmpty()) {
+        if (!m_fwAppData.isEmpty()) {
+            m_fwStep = FwUploadStep::ErasingApp;
+            m_fwRetries = 0;
+            mFwUploadStatus = "Erasing buffer";
+            emit fwUploadStatus(mFwUploadStatus, 0.0, true);
+            mCommands->eraseNewApp(m_fwFwdCan, quint32(m_fwAppData.size()), mLastFwParams.hwType, mLastFwParams.hw);
+            m_fwTimeoutTimer->start(20000);
+        } else {
+            finishFwUpload(true, "Bootloader upload done");
+        }
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_fwBlData.size());
+    QByteArray chunk = m_fwBlData.mid(0, sz);
+
+    mCommands->writeNewAppData(chunk, uint32_t(m_fwBlAddr), m_fwFwdCan, mLastFwParams.hwType, mLastFwParams.hw);
+    m_fwTimeoutTimer->start(3000);
+
+    if (m_fwBlTotalSize > 0) {
+        double prog = double(m_fwBlAddr - m_fwBlStartAddr) / double(m_fwBlTotalSize);
+        if (!m_fwAppData.isEmpty()) {
+            mFwUploadProgress = prog * 0.2;
+        } else {
+            mFwUploadProgress = prog;
+        }
+    }
+    mFwUploadStatus = "Uploading Bootloader";
+    emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
+}
+
+void VescInterface::sendNextAppChunk()
+{
+    if (mCancelFwUpload) {
+        finishFwUpload(false, "Upload cancelled");
+        return;
+    }
+
+    if (m_fwAppData.isEmpty()) {
+        finalizeFwUpload();
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_fwAppData.size());
+    QByteArray chunk = m_fwAppData.mid(0, sz);
+
+    bool hasData = false;
+    for (char b : chunk) {
+        if (b != (char)0xff) {
+            hasData = true;
+            break;
+        }
+    }
+
+    if (!hasData) {
+        m_fwAppAddr += sz;
+        m_fwAppData.remove(0, sz);
+        if (m_fwAppTotalSize > 0) {
+            double prog = double(m_fwAppAddr - m_fwAppStartAddr) / double(m_fwAppTotalSize);
+            if (m_fwBlTotalSize > 0) {
+                mFwUploadProgress = 0.2 + prog * 0.8;
+            } else {
+                mFwUploadProgress = prog;
+            }
+        }
+        QTimer::singleShot(0, this, &VescInterface::sendNextAppChunk);
+        return;
+    }
+
+    bool sentLzo = false;
+    if (m_fwIsLzo && m_fwSupportsLzo) {
+        std::size_t outMaxSize = chunkSize + chunkSize / 16 + 64 + 3;
+        unsigned char out[1000];
+        std::size_t out_len = sz;
+        lzokay::EResult error = lzokay::compress((const uint8_t*)chunk.constData(), sz, out, outMaxSize, out_len);
+        if (error >= lzokay::EResult::Success && (out_len + 2) < uint32_t(sz)) {
+            sentLzo = true;
+            mCommands->writeNewAppDataLzo(QByteArray((const char*)out, int(out_len)), uint32_t(m_fwAppAddr), uint16_t(sz), m_fwFwdCan);
+        }
+    }
+
+    if (!sentLzo) {
+        mCommands->writeNewAppData(chunk, uint32_t(m_fwAppAddr), m_fwFwdCan, mLastFwParams.hwType, mLastFwParams.hw);
+    }
+
+    m_fwTimeoutTimer->start(3000);
+
+    if (m_fwAppTotalSize > 0) {
+        double prog = double(m_fwAppAddr - m_fwAppStartAddr) / double(m_fwAppTotalSize);
+        if (m_fwBlTotalSize > 0) {
+            mFwUploadProgress = 0.2 + prog * 0.8;
+        } else {
+            mFwUploadProgress = prog;
+        }
+    }
+    mFwUploadStatus = "Uploading Firmware";
+    emit fwUploadStatus(mFwUploadStatus, mFwUploadProgress, true);
+}
+
+void VescInterface::onEraseBootloaderResReceived(bool ok)
+{
+    if (!m_fwIsOngoing || m_fwStep != FwUploadStep::ErasingBootloader) {
+        return;
+    }
+    m_fwTimeoutTimer->stop();
+
+    if (!ok) {
+        finishFwUpload(false, "Erasing bootloader failed");
+        return;
+    }
+
+    emit fwUploadStatus("Erase done", 0.0, false);
+    m_fwStep = FwUploadStep::UploadingBootloader;
+    m_fwRetries = 0;
+    sendNextBootloaderChunk();
+}
+
+void VescInterface::onEraseNewAppResReceived(bool ok)
+{
+    if (!m_fwIsOngoing || m_fwStep != FwUploadStep::ErasingApp) {
+        return;
+    }
+    m_fwTimeoutTimer->stop();
+
+    if (!ok) {
+        finishFwUpload(false, "Erasing buffer failed");
+        return;
+    }
+
+    emit fwUploadStatus("Erase done", 0.0, false);
+    m_fwStep = FwUploadStep::UploadingApp;
+    m_fwRetries = 0;
+    sendNextAppChunk();
+}
+
+void VescInterface::onWriteNewAppDataResReceived(bool ok, bool hasOffset, quint32 offset)
+{
+    Q_UNUSED(hasOffset);
+    Q_UNUSED(offset);
+
+    if (!m_fwIsOngoing) {
+        return;
+    }
+
+    if (m_fwStep == FwUploadStep::UploadingBootloader) {
+        m_fwTimeoutTimer->stop();
+        if (ok) {
+            const int chunkSize = 384;
+            int sz = std::min(chunkSize, m_fwBlData.size());
+            m_fwBlAddr += sz;
+            m_fwBlData.remove(0, sz);
+            m_fwRetries = 0;
+            sendNextBootloaderChunk();
+        } else {
+            if (m_fwRetries < 5) {
+                m_fwRetries++;
+                qWarning() << "[FW_UPLOAD] Bootloader write retry" << m_fwRetries << "at addr" << m_fwBlAddr;
+                sendNextBootloaderChunk();
+            } else {
+                finishFwUpload(false, "Write bootloader failed");
+            }
+        }
+    } else if (m_fwStep == FwUploadStep::UploadingApp) {
+        m_fwTimeoutTimer->stop();
+        if (ok) {
+            const int chunkSize = 384;
+            int sz = std::min(chunkSize, m_fwAppData.size());
+            m_fwAppAddr += sz;
+            m_fwAppData.remove(0, sz);
+            m_fwRetries = 0;
+            m_fwLzoFailures = 0;
+            sendNextAppChunk();
+        } else {
+            if (m_fwSupportsLzo) {
+                m_fwLzoFailures++;
+                if (m_fwLzoFailures > 3) {
+                    qWarning() << "[FW_UPLOAD] LZO failing, disabling LZO for remaining upload";
+                    m_fwSupportsLzo = false;
+                }
+            }
+            if (m_fwRetries < 5) {
+                m_fwRetries++;
+                qWarning() << "[FW_UPLOAD] App write retry" << m_fwRetries << "at addr" << m_fwAppAddr;
+                sendNextAppChunk();
+            } else {
+                finishFwUpload(false, "Write firmware failed");
+            }
+        }
+    }
+}
+
+void VescInterface::finalizeFwUpload()
+{
+    if (!m_fwIsOngoing) {
+        return;
+    }
+
+    m_fwStep = FwUploadStep::Finalizing;
+    mFwUploadProgress = 1.0;
+    mFwUploadStatus = "Upload done";
+    emit fwUploadStatus(mFwUploadStatus, 1.0, false);
+
+    mCommands->jumpToBootloader(m_fwFwdCan, mLastFwParams.hwType, mLastFwParams.hw);
+
+    QTimer::singleShot(500, this, [this]() {
+        if (m_fwAutoDisconnect) {
+            disconnectPort();
+        }
+        finishFwUpload(true, "Firmware upload completed successfully!");
+    });
+}
+
+void VescInterface::finishFwUpload(bool success, const QString &message)
+{
+    m_fwTimeoutTimer->stop();
+    m_fwIsOngoing = false;
+    m_fwStep = FwUploadStep::Idle;
+    m_fwAppData.clear();
+    m_fwBlData.clear();
+    mFwUploadProgress = success ? 1.0 : -1.0;
+    mFwUploadStatus = message;
+
+    emit fwUploadStatus(message, mFwUploadProgress, false);
+    if (!success) {
+        emitMessageDialog("Firmware Upload", message, false, false);
+    }
+    emit fwUploadFinished(success, message);
+}
+
+void VescInterface::onFwTimeout()
+{
+    if (!m_fwIsOngoing) {
+        return;
+    }
+
+    qWarning() << "[FW_UPLOAD] Timeout during step" << (int)m_fwStep << "retry" << m_fwRetries;
+
+    if (m_fwStep == FwUploadStep::ErasingBootloader) {
+        if (m_fwRetries < 2) {
+            m_fwRetries++;
+            mCommands->eraseBootloader(m_fwFwdCan, mLastFwParams.hwType, mLastFwParams.hw);
+            m_fwTimeoutTimer->start(15000);
+            return;
+        }
+        finishFwUpload(false, "Erasing bootloader timed out");
+    } else if (m_fwStep == FwUploadStep::ErasingApp) {
+        if (m_fwRetries < 2) {
+            m_fwRetries++;
+            mCommands->eraseNewApp(m_fwFwdCan, quint32(m_fwAppData.size()), mLastFwParams.hwType, mLastFwParams.hw);
+            m_fwTimeoutTimer->start(20000);
+            return;
+        }
+        finishFwUpload(false, "Erasing buffer timed out");
+    } else if (m_fwStep == FwUploadStep::UploadingBootloader) {
+        if (m_fwRetries < 5) {
+            m_fwRetries++;
+            sendNextBootloaderChunk();
+            return;
+        }
+        finishFwUpload(false, "Bootloader upload timed out");
+    } else if (m_fwStep == FwUploadStep::UploadingApp) {
+        if (m_fwRetries < 5) {
+            m_fwRetries++;
+            sendNextAppChunk();
+            return;
+        }
+        finishFwUpload(false, "Firmware upload timed out");
+    }
+}
+
 void VescInterface::fwUploadCancel()
 {
     mCancelFwUpload = true;
+    if (m_fwTimeoutTimer) {
+        m_fwTimeoutTimer->stop();
+    }
+    if (m_fwIsOngoing) {
+        finishFwUpload(false, "Upload cancelled");
+    }
 }
 
 double VescInterface::getFwUploadProgress()
@@ -2246,6 +2410,9 @@ bool VescInterface::isPortConnected()
 
 void VescInterface::disconnectPort()
 {
+    if (m_fwIsOngoing && m_fwStep != FwUploadStep::Finalizing) {
+        finishFwUpload(false, "Disconnected from VESC during firmware upload.");
+    }
 #ifdef HAS_SERIALPORT
     if(mSerialPort->isOpen()) {
         mSerialPort->flush();
@@ -2606,18 +2773,98 @@ QStringList VescInterface::listCANbusInterfaceNames()
     return res;
 }
 
-bool VescInterface::fwUploadFromFile(QString path, bool isBootloader, bool fwdCan)
+static QByteArray readFirmwareFileHelper(const QString &path, QString &errorMsg)
 {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) {
-        emitMessageDialog("Firmware Upload",
-                          "Could not open file: " + path,
-                          false, false);
+    QString normalizedPath = path;
+    if (normalizedPath.startsWith("file:/")) {
+        QUrl u(normalizedPath);
+        if (u.isLocalFile()) {
+            normalizedPath = u.toLocalFile();
+        } else {
+            normalizedPath.remove(0, 6);
+        }
+    }
+
+    QFile file(normalizedPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        errorMsg = QString("Could not open file: %1").arg(normalizedPath);
+        return QByteArray();
+    }
+
+    if (file.size() > 5000000) {
+        errorMsg = "The selected file is too large to be a firmware.";
+        return QByteArray();
+    }
+
+    if (normalizedPath.toLower().endsWith(".hex")) {
+        file.close();
+        QMap<quint32, QByteArray> fwMap;
+        if (!HexFile::parseFile(normalizedPath, fwMap)) {
+            errorMsg = "Failed to parse HEX firmware file.";
+            return QByteArray();
+        }
+
+        QMapIterator<quint32, QByteArray> it(fwMap);
+        QByteArray data;
+        bool startSet = false;
+        unsigned int startOffset = 0;
+
+        while (it.hasNext()) {
+            it.next();
+            if (!startSet) {
+                startSet = true;
+                startOffset = it.key();
+            }
+
+            while ((quint32(data.size()) + startOffset) < it.key()) {
+                data.append(char(0xFF));
+            }
+
+            data.append(it.value());
+        }
+        return data;
+    }
+
+    return file.readAll();
+}
+
+bool VescInterface::fwUploadQueued(QString fwPath, QString blPath, bool fwdCan)
+{
+    QByteArray appData;
+    QByteArray blData;
+    QString err;
+
+    if (!fwPath.isEmpty()) {
+        appData = readFirmwareFileHelper(fwPath, err);
+        if (appData.isEmpty()) {
+            emitMessageDialog("Firmware Upload", err.isEmpty() ? "Firmware file is empty." : err, false, false);
+            return false;
+        }
+    }
+
+    if (!blPath.isEmpty()) {
+        blData = readFirmwareFileHelper(blPath, err);
+        if (blData.isEmpty()) {
+            emitMessageDialog("Firmware Upload", err.isEmpty() ? "Bootloader file is empty." : err, false, false);
+            return false;
+        }
+    }
+
+    if (appData.isEmpty() && blData.isEmpty()) {
+        emitMessageDialog("Firmware Upload", "No firmware or bootloader file specified.", false, false);
         return false;
     }
-    QByteArray data = f.readAll();
-    f.close();
-    return fwUpload(data, isBootloader, fwdCan, true, !isBootloader);
+
+    return fwUploadAsync(appData, blData, fwdCan, true, !appData.isEmpty());
+}
+
+bool VescInterface::fwUploadFromFile(QString path, bool isBootloader, bool fwdCan)
+{
+    if (isBootloader) {
+        return fwUploadQueued("", path, fwdCan);
+    } else {
+        return fwUploadQueued(path, "", fwdCan);
+    }
 }
 
 bool VescInterface::connectCANbus(QString backend, QString ifName, int bitrate)
@@ -4394,6 +4641,53 @@ bool VescInterface::connectTcpHubUuid(QString uuid)
     return false;
 }
 
+bool VescInterface::reloadFirmwareResources()
+{
+    QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString fwStr = QString::number(VT_VERSION, 'f', 2);
+
+    QString pathLatestFw = appDataLoc + "/res_fw_" + fwStr + ".rcc";
+    QString pathEsp32Fw = appDataLoc + "/res_fw_esp32.rcc";
+    QString pathArchiveFw = appDataLoc + "/res_fw.rcc";
+    QString pathConfigs = appDataLoc + "/res_config.rcc";
+
+    bool anyRegistered = false;
+
+    if (QFileInfo::exists(pathLatestFw)) {
+        QResource::unregisterResource(pathLatestFw);
+        if (QResource::registerResource(pathLatestFw)) {
+            anyRegistered = true;
+            qDebug() << "[FW_RES] Registered latest firmware resource:" << pathLatestFw;
+        }
+    }
+
+    if (QFileInfo::exists(pathEsp32Fw)) {
+        QResource::unregisterResource(pathEsp32Fw);
+        if (QResource::registerResource(pathEsp32Fw)) {
+            anyRegistered = true;
+            qDebug() << "[FW_RES] Registered ESP32 / Express firmware resource:" << pathEsp32Fw;
+        }
+    }
+
+    if (QFileInfo::exists(pathArchiveFw)) {
+        QResource::unregisterResource(pathArchiveFw);
+        if (QResource::registerResource(pathArchiveFw)) {
+            anyRegistered = true;
+            qDebug() << "[FW_RES] Registered archive firmware resource:" << pathArchiveFw;
+        }
+    }
+
+    if (QFileInfo::exists(pathConfigs)) {
+        QResource::unregisterResource(pathConfigs);
+        if (QResource::registerResource(pathConfigs)) {
+            anyRegistered = true;
+            qDebug() << "[FW_RES] Registered config resource:" << pathConfigs;
+        }
+    }
+
+    return anyRegistered;
+}
+
 bool VescInterface::downloadFwArchive()
 {
     QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -4425,7 +4719,7 @@ bool VescInterface::downloadFwArchive()
         bool success = (doneWith == DoneWith::Success);
         if (success) {
             emit fwArchiveDlProgress("Download Done", 1.0);
-            QResource::registerResource(path);
+            reloadFirmwareResources();
             syncFsToIndexedDb();
         } else {
             emit fwArchiveDlProgress("Download Failed", 0.0);
@@ -4474,6 +4768,7 @@ bool VescInterface::downloadFwLatest()
         if (state->first == 2) {
             if (state->second) {
                 emit fwArchiveDlProgress("Download Done", 1.0);
+                reloadFirmwareResources();
                 syncFsToIndexedDb();
             } else {
                 emit fwArchiveDlProgress("Download Failed", 0.0);
@@ -4547,14 +4842,9 @@ bool VescInterface::downloadConfigs()
         bool success = (doneWith == DoneWith::Success);
         if (success) {
             emit fwArchiveDlProgress("Download Done", 1.0);
-            bool res = QResource::registerResource(path);
-            if (res) {
-                qDebug() << "Reloaded config resource successfully";
-                syncFsToIndexedDb();
-            } else {
-                qWarning() << "Could not reload config resource";
-            }
-            emit configsDownloaded(res);
+            reloadFirmwareResources();
+            syncFsToIndexedDb();
+            emit configsDownloaded(true);
         } else {
             emit fwArchiveDlProgress("Download Failed", 0.0);
             emit configsDownloaded(false);
@@ -4587,6 +4877,11 @@ bool VescInterface::getFwSupportsConfiguration() const
 
 bool VescInterface::confStoreBackup(bool can, QString name)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    (void)can;
+    startWebBackup(mCommands->getSendCan() ? mCommands->getCanSendId() : -1, name);
+    return true;
+#else
     if (!isPortConnected()) {
         emitMessageDialog("Backup Configuration", "The VESC must be connected to perform this operation.", false, false);
         return false;
@@ -4706,10 +5001,16 @@ bool VescInterface::confStoreBackup(bool can, QString name)
     }
 
     return res;
+#endif
 }
 
 bool VescInterface::confRestoreBackup(bool can)
 {
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    (void)can;
+    requestWebBackupList();
+    return true;
+#else
     if (!isPortConnected()) {
         emitMessageDialog("Restore Configuration", "The VESC must be connected to perform this operation.", false, false);
         return false;
@@ -4876,6 +5177,7 @@ bool VescInterface::confRestoreBackup(bool can)
     }
 
     return res;
+#endif
 }
 
 bool VescInterface::confLoadBackup(QString uuid)
@@ -4915,6 +5217,295 @@ QString VescInterface::confBackupName(QString uuid)
         res = mConfigurationBackups[uuid].name;
     }
     return res;
+}
+
+bool VescInterface::hasWebFsBackupApi()
+{
+    return webfs_is_supported() != 0;
+}
+
+QString VescInterface::getSavedBackupFolderName()
+{
+    return QString::fromUtf8(webfs_get_saved_folder_name());
+}
+
+void VescInterface::selectBackupFolder()
+{
+    webfs_select_folder([](int success, const char *folderName, void *userData) {
+        auto self = static_cast<VescInterface*>(userData);
+        if (self) {
+            QString name = QString::fromUtf8(folderName ? folderName : "");
+            emit self->backupFolderSelected(name, success != 0);
+            if (success) {
+                emit self->statusMessage(tr("Selected backup folder: %1").arg(name), true);
+            }
+        }
+    }, this);
+}
+
+void VescInterface::startWebBackup(int canId, QString customName)
+{
+    if (!isPortConnected()) {
+        emit webBackupFinished(false, tr("Device not connected."), "");
+        emitMessageDialog(tr("Backup Configuration"), tr("The VESC must be connected to perform a backup."), false, false);
+        return;
+    }
+
+    int targetId = canId;
+    if (targetId < 0) {
+        if (mCommands->getSendCan()) {
+            targetId = mCommands->getCanSendId();
+        } else {
+            targetId = -1;
+        }
+    }
+
+    if (targetId >= 0) {
+        mCommands->setSendCan(true, targetId);
+    }
+
+    QString devName = customName;
+    if (devName.trimmed().isEmpty()) {
+        if (targetId >= 0) {
+            devName = QString("Thor (CAN %1)").arg(targetId);
+        } else {
+            devName = mLastFwParams.hw.isEmpty() ? "VESC" : mLastFwParams.hw;
+        }
+    }
+
+    qDebug().noquote() << QString("[WEBFS_BACKUP] Starting async backup for device: %1 (CAN ID: %2)").arg(devName).arg(targetId);
+    emit webBackupProgress(tr("Reading motor configuration from %1...").arg(devName), 0.20);
+
+    struct BackupContext {
+        int canId;
+        QString devName;
+        QString mcXml;
+        QString appXml;
+        QString customXml;
+        QTimer *timeoutTimer;
+        QMetaObject::Connection connMc;
+        QMetaObject::Connection connApp;
+        QMetaObject::Connection connCustom;
+    };
+
+    auto ctx = new BackupContext();
+    ctx->canId = targetId;
+    ctx->devName = devName;
+    ctx->timeoutTimer = new QTimer(this);
+    ctx->timeoutTimer->setSingleShot(true);
+
+    auto cleanup = [this, ctx]() {
+        QObject::disconnect(ctx->connMc);
+        QObject::disconnect(ctx->connApp);
+        QObject::disconnect(ctx->connCustom);
+        ctx->timeoutTimer->stop();
+        ctx->timeoutTimer->deleteLater();
+        delete ctx;
+    };
+
+    auto stepSaveFiles = [this, ctx, cleanup]() {
+        emit webBackupProgress(tr("Writing configuration files to folder..."), 0.85);
+
+        QString cleanDev = ctx->devName;
+        cleanDev.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_").replace("\\", "_");
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss");
+        QString subfolder = QString("%1_%2").arg(cleanDev).arg(timestamp);
+
+        QJsonObject filesObj;
+        filesObj["mcconf.xml"] = ctx->mcXml;
+        filesObj["appconf.xml"] = ctx->appXml;
+        if (!ctx->customXml.isEmpty()) {
+            filesObj["customconf.xml"] = ctx->customXml;
+        }
+
+        QJsonObject infoObj;
+        infoObj["deviceName"] = ctx->devName;
+        infoObj["canId"] = ctx->canId;
+        infoObj["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        infoObj["dateFormatted"] = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
+        infoObj["hw"] = mLastFwParams.hw;
+        infoObj["uuid"] = mUuidStr;
+        infoObj["hasMc"] = !ctx->mcXml.isEmpty();
+        infoObj["hasApp"] = !ctx->appXml.isEmpty();
+        infoObj["hasCustom"] = !ctx->customXml.isEmpty();
+
+        filesObj["backup_info.json"] = QString::fromUtf8(QJsonDocument(infoObj).toJson(QJsonDocument::Indented));
+
+        QByteArray filesJson = QJsonDocument(filesObj).toJson(QJsonDocument::Compact);
+
+        struct SaveCbData {
+            VescInterface *self;
+            QString folder;
+        };
+        auto cbData = new SaveCbData{this, subfolder};
+
+        webfs_save_backup(subfolder.toUtf8().constData(), filesJson.constData(), [](int success, const char *msg, void *userData) {
+            auto d = static_cast<SaveCbData*>(userData);
+            if (d && d->self) {
+                QString resMsg = QString::fromUtf8(msg ? msg : "");
+                emit d->self->webBackupProgress(tr("Backup completed!"), 1.0);
+                emit d->self->webBackupFinished(success != 0, resMsg, d->folder);
+                if (success) {
+                    emit d->self->statusMessage(tr("Backup saved to %1").arg(d->folder), true);
+                } else {
+                    emit d->self->statusMessage(tr("Backup failed: %1").arg(resMsg), false);
+                }
+            }
+            delete d;
+        }, cbData);
+
+        cleanup();
+    };
+
+    auto stepGetCustom = [this, ctx, stepSaveFiles]() {
+        QObject::disconnect(ctx->connApp);
+        ctx->timeoutTimer->stop();
+
+        if (customConfigNum() > 0 && customConfig(0) != nullptr) {
+            emit webBackupProgress(tr("Reading custom configuration..."), 0.65);
+            ctx->connCustom = QObject::connect(customConfig(0), &ConfigParams::updated, this, [this, ctx, stepSaveFiles]() {
+                ctx->customXml = customConfig(0)->getXmlString("customconf");
+                stepSaveFiles();
+            });
+
+            ctx->timeoutTimer->disconnect();
+            QObject::connect(ctx->timeoutTimer, &QTimer::timeout, this, [ctx, stepSaveFiles]() {
+                qWarning() << "[WEBFS_BACKUP] Custom config read timed out, proceeding with motor/app configs";
+                stepSaveFiles();
+            });
+            ctx->timeoutTimer->start(3500);
+            mCommands->customConfigGet(0, false);
+        } else {
+            stepSaveFiles();
+        }
+    };
+
+    auto stepGetApp = [this, ctx, stepGetCustom]() {
+        QObject::disconnect(ctx->connMc);
+        ctx->timeoutTimer->stop();
+
+        emit webBackupProgress(tr("Reading app configuration..."), 0.45);
+        ctx->connApp = QObject::connect(mAppConfig, &ConfigParams::updated, this, [this, ctx, stepGetCustom]() {
+            ctx->appXml = mAppConfig->getXmlString("appconf");
+            stepGetCustom();
+        });
+
+        ctx->timeoutTimer->disconnect();
+        QObject::connect(ctx->timeoutTimer, &QTimer::timeout, this, [this, ctx, stepGetCustom]() {
+            qWarning() << "[WEBFS_BACKUP] App config read timed out, using cached app config";
+            ctx->appXml = mAppConfig->getXmlString("appconf");
+            stepGetCustom();
+        });
+        ctx->timeoutTimer->start(3500);
+        mCommands->getAppConf();
+    };
+
+    ctx->connMc = QObject::connect(mMcConfig, &ConfigParams::updated, this, [this, ctx, stepGetApp]() {
+        ctx->mcXml = mMcConfig->getXmlString("mcconf");
+        stepGetApp();
+    });
+
+    QObject::connect(ctx->timeoutTimer, &QTimer::timeout, this, [this, ctx, stepGetApp]() {
+        qWarning() << "[WEBFS_BACKUP] Motor config read timed out, using cached motor config";
+        ctx->mcXml = mMcConfig->getXmlString("mcconf");
+        stepGetApp();
+    });
+    ctx->timeoutTimer->start(3500);
+    mCommands->getMcconfForce(true);
+}
+
+void VescInterface::requestWebBackupList()
+{
+    webfs_list_backups([](int success, const char *jsonList, void *userData) {
+        auto self = static_cast<VescInterface*>(userData);
+        if (self) {
+            QVariantList resultList;
+            if (success && jsonList) {
+                QJsonDocument doc = QJsonDocument::fromJson(QByteArray(jsonList));
+                if (doc.isArray()) {
+                    QJsonArray arr = doc.array();
+                    for (int i = 0; i < arr.size(); i++) {
+                        resultList.append(arr.at(i).toVariant());
+                    }
+                }
+            }
+            emit self->webBackupListReady(resultList);
+        }
+    }, this);
+}
+
+void VescInterface::restoreFromWebBackup(QString subfolderName, int canId)
+{
+    if (!isPortConnected()) {
+        emit webRestoreFinished(false, tr("Device not connected."));
+        return;
+    }
+
+    if (canId >= 0) {
+        mCommands->setSendCan(true, canId);
+    }
+
+    struct RestoreCbData {
+        VescInterface *self;
+        QString subfolder;
+    };
+    auto cbData = new RestoreCbData{this, subfolderName};
+
+    webfs_read_backup(subfolderName.toUtf8().constData(), [](int success, const char *jsonData, void *userData) {
+        auto d = static_cast<RestoreCbData*>(userData);
+        if (!d || !d->self) {
+            delete d;
+            return;
+        }
+
+        auto self = d->self;
+        QString subfolder = d->subfolder;
+        delete d;
+
+        if (!success || !jsonData) {
+            emit self->webRestoreFinished(false, tr("Failed to read backup from folder: %1").arg(subfolder));
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(jsonData));
+        if (!doc.isObject()) {
+            emit self->webRestoreFinished(false, tr("Invalid backup data format."));
+            return;
+        }
+
+        QJsonObject obj = doc.object();
+        QString mcXml = obj.value("mcconf").toString();
+        QString appXml = obj.value("appconf").toString();
+        QString customXml = obj.value("customconf").toString();
+
+        bool restoredAny = false;
+        if (!mcXml.isEmpty()) {
+            self->mcConfig()->loadXmlString(mcXml, "mcconf");
+            self->commands()->setMcconf(false);
+            restoredAny = true;
+        }
+        if (!appXml.isEmpty()) {
+            self->appConfig()->loadXmlString(appXml, "appconf");
+            self->commands()->setAppConf();
+            restoredAny = true;
+        }
+        if (!customXml.isEmpty() && self->customConfig(0) != nullptr) {
+            self->customConfig(0)->loadXmlString(customXml, "customconf");
+            self->commands()->customConfigSet(0, self->customConfig(0));
+            restoredAny = true;
+        }
+
+        if (restoredAny) {
+            emit self->webRestoreFinished(true, tr("Configuration restored successfully from %1").arg(subfolder));
+            emit self->statusMessage(tr("Restored backup: %1").arg(subfolder), true);
+            QTimer::singleShot(500, self, [self]() {
+                self->commands()->getMcconfForce(true);
+                self->commands()->getAppConf();
+            });
+        } else {
+            emit self->webRestoreFinished(false, tr("No configuration files found in backup."));
+        }
+    }, cbData);
 }
 
 bool VescInterface::deserializeFailedSinceConnected()

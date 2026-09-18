@@ -80,6 +80,24 @@ Item {
                 dlText = Number(bytesReceived / 1000).toFixed(1) + " kB"
             }
         }
+
+        function onPackageInstallProgress(stepName, bytes, bytesTotal, percentage) {
+            downloadInProgress = true
+            dlValue = percentage * 100.0
+            dlText = stepName + " (" + Number(dlValue).toFixed(0) + "%)"
+        }
+
+        function onPackageInstallFinished(success, message) {
+            downloadInProgress = false
+            dlText = message ? message : (success ? "Installation Done!" : "Installation failed")
+            VescIf.emitMessageDialog("Install Package", dlText, success, false)
+        }
+
+        function onPackageUninstallFinished(success, message) {
+            downloadInProgress = false
+            dlText = message ? message : (success ? "Uninstallation Done!" : "Uninstallation failed")
+            VescIf.emitMessageDialog("Uninstall Package", dlText, success, false)
+        }
     }
 
     // ---- Markdown preview timer (Create Package tab) ----
@@ -201,9 +219,13 @@ Item {
 
         onAccepted: {
             if (pendingPkg) {
-                Qt.callLater(function() {
-                    mLoader.installVescPackage(pendingPkg.compressedData)
-                })
+                downloadInProgress = true
+                dlValue = 0
+                dlText = "Preparing installation..."
+                var started = mLoader.installVescPackage(pendingPkg.compressedData)
+                if (!started) {
+                    downloadInProgress = false
+                }
             }
         }
     }
@@ -459,12 +481,13 @@ Item {
                                 }
 
                                 if (currentPkg && currentPkg.loadOk) {
-                                    Qt.callLater(function() {
-                                        mLoader.installVescPackage(currentPkg.compressedData)
-                                        VescIf.emitMessageDialog("Install Package",
-                                                                 "Installation Done!",
-                                                                 true, false)
-                                    })
+                                    downloadInProgress = true
+                                    dlValue = 0
+                                    dlText = "Preparing installation..."
+                                    var started = mLoader.installVescPackage(currentPkg.compressedData)
+                                    if (!started) {
+                                        downloadInProgress = false
+                                    }
                                 } else {
                                     VescIf.emitMessageDialog("Install Package",
                                                              "No package selected.",
@@ -531,9 +554,13 @@ Item {
                                     }
 
                                     if (mLoader.shouldShowPackage(pkg)) {
-                                        Qt.callLater(function() {
-                                            mLoader.installVescPackage(pkg.compressedData)
-                                        })
+                                        downloadInProgress = true
+                                        dlValue = 0
+                                        dlText = "Preparing installation..."
+                                        var started = mLoader.installVescPackage(pkg.compressedData)
+                                        if (!started) {
+                                            downloadInProgress = false
+                                        }
                                     } else {
                                         incompatibleDialog.pendingPkg = pkg
                                         incompatibleDialog.open()
@@ -834,15 +861,10 @@ Item {
                         return
                     }
 
-                    Qt.callLater(function() {
-                        mLoader.qmlErase(16)
-                        mLoader.lispErase(16)
-                        Utility.sleepWithEventLoop(500)
-                        VescIf.reloadFirmware()
-                        VescIf.emitMessageDialog("Uninstall Package",
-                                                 "Uninstallation Done!",
-                                                 true, false)
-                    })
+                    downloadInProgress = true
+                    dlValue = 0
+                    dlText = "Uninstalling Package..."
+                    mLoader.uninstallPackage()
                 }
             }
         }

@@ -62,6 +62,8 @@ public:
     Q_INVOKABLE bool installVescPackage(QByteArray data);
     Q_INVOKABLE bool installVescPackageFromPath(QString path);
 
+    Q_INVOKABLE void uninstallPackage();
+
     Q_INVOKABLE static bool loadPackageArchiveResource();
     Q_INVOKABLE QVariantList reloadPackageArchive();
     Q_INVOKABLE bool downloadPackageArchive();
@@ -78,6 +80,10 @@ signals:
     void downloadProgress(qint64 bytesReceived, qint64 bytesTotal);
     void packageArchiveDownloaded(bool success);
     void lispUploadProgress(qint64 bytes, qint64 bytesTotal);
+    void qmlUploadProgress(qint64 bytes, qint64 bytesTotal);
+    void packageInstallProgress(QString stepName, qint64 bytes, qint64 bytesTotal, double percentage);
+    void packageInstallFinished(bool success, QString message);
+    void packageUninstallFinished(bool success, QString message);
 
 private slots:
     void onCustomAppDataReceived(QByteArray data);
@@ -85,10 +91,39 @@ private slots:
     void onSerialFetchTimeout();
     void onPortConnectedChanged();
 
+    // Package install / uninstall response slots
+    void onEraseQmlUiResReceived(bool ok);
+    void onWriteQmlUiResReceived(bool ok, quint32 offset);
+    void onLispEraseCodeRx(bool ok);
+    void onLispWriteCodeRx(bool ok, quint32 offset);
+    void onInstallTimeout();
+
 private:
+    enum class PkgInstallStep {
+        Idle,
+        ErasingQml,
+        UploadingQml,
+        ErasingLisp,
+        UploadingLisp,
+        StartingLisp,
+        Finalizing,
+        UninstallErasingLisp,
+        UninstallErasingQml,
+        UninstallFinalizing
+    };
+
     void requestNextChunk();
     void handleChunk(int totalSize, int offset, const QByteArray &chunkData);
     void finalizeSerialPackage();
+
+    // Package install / uninstall helper methods
+    void startInstallStep();
+    void sendNextQmlChunk();
+    void startLispStep();
+    void sendNextLispChunk();
+    void finalizeInstall();
+    void finishInstall(bool success, const QString &message);
+    void finishUninstall(bool success, const QString &message);
 
     VescInterface *mVesc;
     bool mAbortDownloadUpload;
@@ -103,6 +138,17 @@ private:
     int m_serialPkgId;
     int m_serialPkgRetries;
     QTimer *m_serialFetchTimer;
+
+    // Package Install / Uninstall State
+    PkgInstallStep m_installStep;
+    bool m_installOngoing;
+    VescPackage m_installPkg;
+    QByteArray m_installQmlData;
+    QByteArray m_installLispData;
+    int m_installQmlOffset;
+    int m_installLispOffset;
+    int m_installRetries;
+    QTimer *m_installTimeoutTimer;
 };
 
 #endif // CODELOADER_H

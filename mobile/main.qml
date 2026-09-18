@@ -520,6 +520,12 @@ ApplicationWindow {
                 implicitWidth: 0
                 clip: true
 
+                onCurrentIndexChanged: {
+                    if (contentItem && typeof contentItem.positionViewAtIndex === "function") {
+                        contentItem.positionViewAtIndex(currentIndex, ListView.Contain)
+                    }
+                }
+
                 background: Rectangle {
                     opacity: 1
                     color: Utility.getAppHexColor("lightBackground")
@@ -1072,9 +1078,11 @@ ApplicationWindow {
                             "hasCust:", hasCust, "loaderReady:", (confCustomLoader.status == Loader.Ready))
 
                 if (hasCust) {
-                    mainSwipeView.insertItem(4, confCustomPage)
-                    tabBar.insertItem(4, confCustomButton)
-                    confCustomPage.visible = true
+                    if (!confCustomPage.visible) {
+                        mainSwipeView.insertItem(4, confCustomPage)
+                        tabBar.insertItem(4, confCustomButton)
+                        confCustomPage.visible = true
+                    }
                     confCustomLoader.item.reloadConfig()
                     var hwName = VescIf.customConfig(0).getLongName("hw_name")
                     confCustomButton.text = hwName ? hwName : "Custom CFG"

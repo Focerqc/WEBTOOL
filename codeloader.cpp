@@ -49,6 +49,15 @@ CodeLoader::CodeLoader(QObject *parent) : QObject(parent)
     m_serialFetchTimer->setSingleShot(true);
     connect(m_serialFetchTimer, &QTimer::timeout, this, &CodeLoader::onSerialFetchTimeout);
 
+    m_installStep = PkgInstallStep::Idle;
+    m_installOngoing = false;
+    m_installQmlOffset = 0;
+    m_installLispOffset = 0;
+    m_installRetries = 0;
+    m_installTimeoutTimer = new QTimer(this);
+    m_installTimeoutTimer->setSingleShot(true);
+    connect(m_installTimeoutTimer, &QTimer::timeout, this, &CodeLoader::onInstallTimeout);
+
     static bool resourceLoaded = false;
     if (!resourceLoaded) {
         if (loadPackageArchiveResource()) {
@@ -72,6 +81,10 @@ void CodeLoader::setVesc(VescInterface *vesc)
         if (mVesc->commands()) {
             disconnect(mVesc->commands(), &Commands::customAppDataReceived, this, &CodeLoader::onCustomAppDataReceived);
             disconnect(mVesc->commands(), &Commands::qmluiAppRx, this, &CodeLoader::onQmluiAppRx);
+            disconnect(mVesc->commands(), &Commands::eraseQmluiResReceived, this, &CodeLoader::onEraseQmlUiResReceived);
+            disconnect(mVesc->commands(), &Commands::writeQmluiResReceived, this, &CodeLoader::onWriteQmlUiResReceived);
+            disconnect(mVesc->commands(), &Commands::lispEraseCodeRx, this, &CodeLoader::onLispEraseCodeRx);
+            disconnect(mVesc->commands(), &Commands::lispWriteCodeRx, this, &CodeLoader::onLispWriteCodeRx);
         }
         disconnect(mVesc, &VescInterface::portConnectedChanged, this, &CodeLoader::onPortConnectedChanged);
     }
@@ -82,6 +95,10 @@ void CodeLoader::setVesc(VescInterface *vesc)
         if (mVesc->commands()) {
             connect(mVesc->commands(), &Commands::customAppDataReceived, this, &CodeLoader::onCustomAppDataReceived);
             connect(mVesc->commands(), &Commands::qmluiAppRx, this, &CodeLoader::onQmluiAppRx);
+            connect(mVesc->commands(), &Commands::eraseQmluiResReceived, this, &CodeLoader::onEraseQmlUiResReceived);
+            connect(mVesc->commands(), &Commands::writeQmluiResReceived, this, &CodeLoader::onWriteQmlUiResReceived);
+            connect(mVesc->commands(), &Commands::lispEraseCodeRx, this, &CodeLoader::onLispEraseCodeRx);
+            connect(mVesc->commands(), &Commands::lispWriteCodeRx, this, &CodeLoader::onLispWriteCodeRx);
         }
         connect(mVesc, &VescInterface::portConnectedChanged, this, &CodeLoader::onPortConnectedChanged);
     }
@@ -919,7 +936,9 @@ VescPackage CodeLoader::unpackVescPackage(QByteArray data)
 
 VescPackage CodeLoader::unpackVescPackageFromPath(QString path)
 {
-    if (path.startsWith("file:/")) {
+    if (path.startsWith("file://")) {
+        path = QUrl(path).toLocalFile();
+    } else if (path.startsWith("file:/")) {
         path.remove(0, 6);
     }
 
@@ -949,47 +968,67 @@ VescPackage CodeLoader::unpackVescPackageFromPath(QString path)
 
 bool CodeLoader::installVescPackage(VescPackage pkg)
 {
-    if (!pkg.loadOk) {
-        mVesc->emitMessageDialog(tr("Write Package"), tr("Package is not valid."), false);
+    if (m_installOngoing) {
+        qWarning() << "[CodeLoader] Package installation already in progress.";
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Write Package"),
+                                     tr("Installation is already in progress."),
+                                     false, false);
+        }
         return false;
     }
 
-    bool res = true;
-    QByteArray qml;
-
-    if (!pkg.qmlFile.isEmpty()) {
-        qml = qmlCompress(pkg.qmlFile);
-        res = qmlErase(qml.size() + 100);
-
-        if (res) {
-            res = qmlUpload(qml, pkg.qmlIsFullscreen);
+    if (!mVesc || !mVesc->isPortConnected()) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Write Package"),
+                                     tr("Not connected to VESC."),
+                                     false, false);
         }
-    } else {
-        if (mVesc && mVesc->isPortConnected() && mVesc->getLastFwRxParams().hasQmlApp) {
-            res = qmlErase(16);
+        emit packageInstallFinished(false, tr("Not connected to VESC."));
+        return false;
+    }
+
+    if (!pkg.loadOk) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Write Package"),
+                                     tr("Package is not valid."),
+                                     false, false);
+        }
+        emit packageInstallFinished(false, tr("Package is not valid."));
+        return false;
+    }
+
+    // Save package into persistent packages folder
+    if (!pkg.compressedData.isEmpty()) {
+        QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QString pkgDir = appDataLoc + "/packages";
+        if (!QDir(pkgDir).exists()) {
+            QDir().mkpath(pkgDir);
+        }
+        QString safeName = pkg.name;
+        safeName.replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_");
+        if (safeName.isEmpty()) {
+            safeName = "installed_package";
+        }
+        QFile f(pkgDir + "/" + safeName + ".vescpkg");
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(pkg.compressedData);
+            f.close();
+            syncFsToIndexedDb();
         }
     }
 
-    if (res) {
-        if (!pkg.lispData.isEmpty()) {
-            res = lispErase(pkg.lispData.size() + 100);
+    m_installPkg = pkg;
+    m_installOngoing = true;
+    m_installRetries = 0;
+    m_installQmlData.clear();
+    m_installLispData.clear();
+    m_installQmlOffset = 0;
+    m_installLispOffset = 0;
+    mAbortDownloadUpload = false;
 
-            if (res) {
-                res = lispUpload(VByteArray(pkg.lispData));
-
-                if (res) {
-                    mVesc->commands()->lispSetRunning(1);
-                }
-            }
-        } else {
-            res = lispErase(16);
-        }
-    }
-
-    Utility::sleepWithEventLoop(500);
-    mVesc->reloadFirmware();
-
-    return res;
+    startInstallStep();
+    return true;
 }
 
 bool CodeLoader::installVescPackage(QByteArray data)
@@ -999,19 +1038,420 @@ bool CodeLoader::installVescPackage(QByteArray data)
 
 bool CodeLoader::installVescPackageFromPath(QString path)
 {
-    if (path.startsWith("file:/")) {
+    if (path.startsWith("file://")) {
+        path = QUrl(path).toLocalFile();
+    } else if (path.startsWith("file:/")) {
         path.remove(0, 6);
     }
 
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
-        mVesc->emitMessageDialog(tr("Write Package"),
-                                 tr("Could not open package file for reading."),
-                                 false, false);
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Write Package"),
+                                     tr("Could not open package file for reading."),
+                                     false, false);
+        }
         return false;
     }
 
     return installVescPackage(f.readAll());
+}
+
+void CodeLoader::startInstallStep()
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    if (!m_installPkg.qmlFile.isEmpty()) {
+        QByteArray qml = qmlCompress(m_installPkg.qmlFile);
+
+        VByteArray vb;
+        vb.vbAppendUint16(m_installPkg.qmlIsFullscreen ? 2 : 1);
+        vb.append(qml);
+        quint16 crc = Packet::crc16((const unsigned char*)vb.constData(), uint32_t(vb.size()));
+        VByteArray data;
+        data.vbAppendUint32(vb.size() - 2);
+        data.vbAppendUint16(crc);
+        data.append(vb);
+
+        if (data.size() > (1024 * 120)) {
+            finishInstall(false, tr("Not enough space on controller for QML UI."));
+            return;
+        }
+
+        m_installQmlData = data;
+        m_installQmlOffset = 0;
+        m_installStep = PkgInstallStep::ErasingQml;
+        m_installRetries = 0;
+
+        emit packageInstallProgress(tr("Erasing QML UI..."), 0, m_installQmlData.size(), 0.05);
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->qmlUiErase(qml.size() + 100);
+        }
+        m_installTimeoutTimer->start(4000);
+    } else if (mVesc && mVesc->isPortConnected() && mVesc->getLastFwRxParams().hasQmlApp) {
+        m_installStep = PkgInstallStep::ErasingQml;
+        m_installRetries = 0;
+        emit packageInstallProgress(tr("Clearing old QML UI..."), 0, 16, 0.05);
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->qmlUiErase(16);
+        }
+        m_installTimeoutTimer->start(4000);
+    } else {
+        startLispStep();
+    }
+}
+
+void CodeLoader::onEraseQmlUiResReceived(bool ok)
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    if (m_installStep == PkgInstallStep::UninstallErasingQml) {
+        m_installTimeoutTimer->stop();
+        if (!ok) {
+            qWarning() << "[CodeLoader] Erasing QML during uninstall reported false, proceeding to finalize.";
+        }
+        m_installStep = PkgInstallStep::UninstallFinalizing;
+        emit packageInstallProgress(tr("Finalizing uninstall..."), 100, 100, 1.0);
+        QTimer::singleShot(500, this, [this]() {
+            if (mVesc) {
+                mVesc->reloadFirmware();
+            }
+            finishUninstall(true, tr("Uninstallation Done!"));
+        });
+        return;
+    }
+
+    if (m_installStep != PkgInstallStep::ErasingQml) {
+        return;
+    }
+
+    m_installTimeoutTimer->stop();
+    if (!ok) {
+        finishInstall(false, tr("Erasing QML UI on VESC failed."));
+        return;
+    }
+
+    if (!m_installQmlData.isEmpty()) {
+        m_installStep = PkgInstallStep::UploadingQml;
+        m_installQmlOffset = 0;
+        m_installRetries = 0;
+        sendNextQmlChunk();
+    } else {
+        startLispStep();
+    }
+}
+
+void CodeLoader::sendNextQmlChunk()
+{
+    if (!m_installOngoing || m_installStep != PkgInstallStep::UploadingQml) {
+        return;
+    }
+
+    if (m_installQmlOffset >= m_installQmlData.size()) {
+        emit qmlUploadProgress(m_installQmlData.size(), m_installQmlData.size());
+        startLispStep();
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_installQmlData.size() - m_installQmlOffset);
+    QByteArray chunk = m_installQmlData.mid(m_installQmlOffset, sz);
+
+    double prog = 0.05 + 0.45 * ((double)m_installQmlOffset / (double)m_installQmlData.size());
+    emit packageInstallProgress(tr("Writing QML UI..."), m_installQmlOffset, m_installQmlData.size(), prog);
+    emit qmlUploadProgress(m_installQmlOffset, m_installQmlData.size());
+
+    if (mVesc && mVesc->commands()) {
+        mVesc->commands()->qmlUiWrite(chunk, m_installQmlOffset);
+    }
+    m_installTimeoutTimer->start(1500);
+}
+
+void CodeLoader::onWriteQmlUiResReceived(bool ok, quint32 offset)
+{
+    if (!m_installOngoing || m_installStep != PkgInstallStep::UploadingQml) {
+        return;
+    }
+
+    m_installTimeoutTimer->stop();
+
+    if (!ok) {
+        if (m_installRetries < 5) {
+            m_installRetries++;
+            qWarning() << "[CodeLoader] QML write failed at offset" << offset << ", retrying" << m_installRetries;
+            sendNextQmlChunk();
+        } else {
+            finishInstall(false, tr("QML write failed at offset %1.").arg(offset));
+        }
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_installQmlData.size() - m_installQmlOffset);
+    m_installRetries = 0;
+    m_installQmlOffset += sz;
+    sendNextQmlChunk();
+}
+
+void CodeLoader::startLispStep()
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    if (!m_installPkg.lispData.isEmpty()) {
+        auto fwParams = mVesc ? mVesc->getLastFwRxParams() : FW_RX_PARAMS();
+        int max_size = 1024 * 512 - 6;
+        if (fwParams.hwType == HW_TYPE_VESC) {
+            max_size = 1024 * 128 - 6;
+        }
+
+        if (m_installPkg.lispData.size() > max_size) {
+            finishInstall(false, tr("Not enough space on controller for Lisp script."));
+            return;
+        }
+
+        VByteArray vb(m_installPkg.lispData);
+        quint16 crc = Packet::crc16((const unsigned char*)vb.constData(), uint32_t(vb.size()));
+        VByteArray data;
+        data.vbAppendUint32(vb.size() - 2);
+        data.vbAppendUint16(crc);
+        data.append(vb);
+
+        m_installLispData = data;
+        m_installLispOffset = 0;
+        m_installStep = PkgInstallStep::ErasingLisp;
+        m_installRetries = 0;
+
+        emit packageInstallProgress(tr("Erasing Lisp code..."), 0, m_installLispData.size(), 0.55);
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->lispEraseCode(m_installPkg.lispData.size() + 100);
+        }
+        m_installTimeoutTimer->start(8000);
+    } else {
+        m_installStep = PkgInstallStep::ErasingLisp;
+        m_installRetries = 0;
+        emit packageInstallProgress(tr("Clearing old Lisp code..."), 0, 16, 0.55);
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->lispEraseCode(16);
+        }
+        m_installTimeoutTimer->start(8000);
+    }
+}
+
+void CodeLoader::onLispEraseCodeRx(bool ok)
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    if (m_installStep == PkgInstallStep::UninstallErasingLisp) {
+        m_installTimeoutTimer->stop();
+        if (!ok) {
+            qWarning() << "[CodeLoader] Erasing Lisp during uninstall reported false, proceeding to QML erase.";
+        }
+        m_installStep = PkgInstallStep::UninstallErasingQml;
+        emit packageInstallProgress(tr("Erasing QML UI..."), 0, 16, 0.5);
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->qmlUiErase(16);
+        }
+        m_installTimeoutTimer->start(4000);
+        return;
+    }
+
+    if (m_installStep != PkgInstallStep::ErasingLisp) {
+        return;
+    }
+
+    m_installTimeoutTimer->stop();
+    if (!ok) {
+        finishInstall(false, tr("Erasing Lisp code on VESC failed."));
+        return;
+    }
+
+    if (!m_installLispData.isEmpty()) {
+        m_installStep = PkgInstallStep::UploadingLisp;
+        m_installLispOffset = 0;
+        m_installRetries = 0;
+        sendNextLispChunk();
+    } else {
+        finalizeInstall();
+    }
+}
+
+void CodeLoader::sendNextLispChunk()
+{
+    if (!m_installOngoing || m_installStep != PkgInstallStep::UploadingLisp) {
+        return;
+    }
+
+    if (m_installLispOffset >= m_installLispData.size()) {
+        emit lispUploadProgress(m_installLispData.size(), m_installLispData.size());
+        if (mVesc && mVesc->commands()) {
+            mVesc->commands()->lispSetRunning(1);
+        }
+        finalizeInstall();
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_installLispData.size() - m_installLispOffset);
+    QByteArray chunk = m_installLispData.mid(m_installLispOffset, sz);
+
+    double prog = 0.55 + 0.40 * ((double)m_installLispOffset / (double)m_installLispData.size());
+    emit packageInstallProgress(tr("Writing Lisp code..."), m_installLispOffset, m_installLispData.size(), prog);
+    emit lispUploadProgress(m_installLispOffset, m_installLispData.size());
+
+    if (mVesc && mVesc->commands()) {
+        mVesc->commands()->lispWriteCode(chunk, m_installLispOffset);
+    }
+    m_installTimeoutTimer->start(1500);
+}
+
+void CodeLoader::onLispWriteCodeRx(bool ok, quint32 offset)
+{
+    if (!m_installOngoing || m_installStep != PkgInstallStep::UploadingLisp) {
+        return;
+    }
+
+    m_installTimeoutTimer->stop();
+
+    if (!ok) {
+        if (m_installRetries < 5) {
+            m_installRetries++;
+            qWarning() << "[CodeLoader] Lisp write failed at offset" << offset << ", retrying" << m_installRetries;
+            sendNextLispChunk();
+        } else {
+            finishInstall(false, tr("Lisp write failed at offset %1.").arg(offset));
+        }
+        return;
+    }
+
+    const int chunkSize = 384;
+    int sz = std::min(chunkSize, m_installLispData.size() - m_installLispOffset);
+    m_installRetries = 0;
+    m_installLispOffset += sz;
+    sendNextLispChunk();
+}
+
+void CodeLoader::finalizeInstall()
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    m_installStep = PkgInstallStep::Finalizing;
+    emit packageInstallProgress(tr("Finalizing installation..."), 100, 100, 0.98);
+
+    QTimer::singleShot(500, this, [this]() {
+        if (mVesc) {
+            mVesc->reloadFirmware();
+        }
+        finishInstall(true, tr("Installation Done!"));
+    });
+}
+
+void CodeLoader::finishInstall(bool success, const QString &message)
+{
+    m_installTimeoutTimer->stop();
+    m_installOngoing = false;
+    m_installStep = PkgInstallStep::Idle;
+    m_installQmlData.clear();
+    m_installLispData.clear();
+    m_installPkg = VescPackage();
+
+    emit packageInstallProgress(message, 100, 100, 1.0);
+    emit packageInstallFinished(success, message);
+}
+
+void CodeLoader::uninstallPackage()
+{
+    if (m_installOngoing) {
+        qWarning() << "[CodeLoader] Installation or uninstallation already in progress.";
+        return;
+    }
+
+    if (!mVesc || !mVesc->isPortConnected()) {
+        if (mVesc) {
+            mVesc->emitMessageDialog(tr("Uninstall Package"), tr("Not Connected"), false, false);
+        }
+        emit packageUninstallFinished(false, tr("Not Connected"));
+        return;
+    }
+
+    m_installOngoing = true;
+    m_installStep = PkgInstallStep::UninstallErasingLisp;
+    m_installRetries = 0;
+
+    emit packageInstallProgress(tr("Erasing Lisp code..."), 0, 16, 0.1);
+    if (mVesc && mVesc->commands()) {
+        mVesc->commands()->lispEraseCode(16);
+    }
+    m_installTimeoutTimer->start(8000);
+}
+
+void CodeLoader::finishUninstall(bool success, const QString &message)
+{
+    m_installTimeoutTimer->stop();
+    m_installOngoing = false;
+    m_installStep = PkgInstallStep::Idle;
+
+    emit packageUninstallFinished(success, message);
+}
+
+void CodeLoader::onInstallTimeout()
+{
+    if (!m_installOngoing) {
+        return;
+    }
+
+    qWarning() << "[CodeLoader] Install timeout during step" << (int)m_installStep << "retries:" << m_installRetries;
+
+    if (m_installStep == PkgInstallStep::UploadingQml) {
+        if (m_installRetries < 5) {
+            m_installRetries++;
+            sendNextQmlChunk();
+            return;
+        }
+    } else if (m_installStep == PkgInstallStep::UploadingLisp) {
+        if (m_installRetries < 5) {
+            m_installRetries++;
+            sendNextLispChunk();
+            return;
+        }
+    } else if (m_installStep == PkgInstallStep::ErasingQml) {
+        if (m_installRetries < 3) {
+            m_installRetries++;
+            if (mVesc && mVesc->commands()) {
+                mVesc->commands()->qmlUiErase(m_installQmlData.isEmpty() ? 16 : (m_installQmlData.size() + 100));
+            }
+            m_installTimeoutTimer->start(4000);
+            return;
+        }
+    } else if (m_installStep == PkgInstallStep::ErasingLisp) {
+        if (m_installRetries < 3) {
+            m_installRetries++;
+            if (mVesc && mVesc->commands()) {
+                mVesc->commands()->lispEraseCode(m_installPkg.lispData.isEmpty() ? 16 : (m_installPkg.lispData.size() + 100));
+            }
+            m_installTimeoutTimer->start(8000);
+            return;
+        }
+    }
+
+    bool isUninstall = (m_installStep == PkgInstallStep::UninstallErasingLisp ||
+                        m_installStep == PkgInstallStep::UninstallErasingQml ||
+                        m_installStep == PkgInstallStep::UninstallFinalizing);
+
+    if (isUninstall) {
+        finishUninstall(false, tr("Uninstall timed out waiting for VESC response."));
+    } else {
+        finishInstall(false, tr("Installation timed out waiting for VESC response."));
+    }
 }
 
 bool CodeLoader::loadPackageArchiveResource()
@@ -1374,6 +1814,16 @@ void CodeLoader::onPortConnectedChanged()
         m_serialPkgBuffer.clear();
         emit packageArchiveDownloaded(false);
     }
+
+    if (m_installOngoing && (!mVesc || !mVesc->isPortConnected())) {
+        if (m_installStep == PkgInstallStep::UninstallErasingLisp ||
+            m_installStep == PkgInstallStep::UninstallErasingQml ||
+            m_installStep == PkgInstallStep::UninstallFinalizing) {
+            finishUninstall(false, tr("Disconnected from VESC during uninstall."));
+        } else {
+            finishInstall(false, tr("Disconnected from VESC during package installation."));
+        }
+    }
 }
 
 void CodeLoader::abortDownloadUpload()
@@ -1384,6 +1834,9 @@ void CodeLoader::abortDownloadUpload()
         m_serialFetchTimer->stop();
         m_serialPkgBuffer.clear();
         emit packageArchiveDownloaded(false);
+    }
+    if (m_installOngoing) {
+        finishInstall(false, tr("Operation aborted by user."));
     }
 }
 
