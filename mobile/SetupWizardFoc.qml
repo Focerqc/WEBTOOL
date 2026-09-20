@@ -943,7 +943,20 @@ Item {
 
             if (result >= 0) {
                 resDetect = true
-                res = "Success!\n\nMotor detection completed successfully."
+
+                var sensors = "Sensorless"
+                var sensorMode = mMcConf.getParamEnum("foc_sensor_mode")
+                if (sensorMode === 1) sensors = "Encoder"
+                else if (sensorMode === 2) sensors = "Hall Sensors"
+
+                res = "Success!\n\n" +
+                      "Motor current      : " + mMcConf.getParamDouble("l_current_max").toFixed(2) + " A\n" +
+                      "Motor R            : " + (mMcConf.getParamDouble("foc_motor_r") * 1000.0).toFixed(2) + " mΩ\n" +
+                      "Motor L            : " + (mMcConf.getParamDouble("foc_motor_l") * 1000000.0).toFixed(2) + " µH\n" +
+                      "Motor Lq-Ld        : " + (mMcConf.getParamDouble("foc_motor_ld_lq_diff") * 1000000.0).toFixed(2) + " µH\n" +
+                      "Motor Flux Linkage : " + (mMcConf.getParamDouble("foc_motor_flux_linkage") * 1000.0).toFixed(2) + " mWb\n" +
+                      "Temp Comp          : " + (mMcConf.getParamBool("foc_temp_comp") ? "True" : "False") + "\n" +
+                      "Sensors            : " + sensors
 
                 if (usageList && usageList.currentItem && usageList.currentItem.modelData) {
                     Utility.setBatteryCutCanFromCurrentConfig(VescIf, canDevs, usageList.currentItem.modelData.batt_cut_cautious)
