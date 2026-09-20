@@ -329,6 +329,22 @@ Item {
     property var hwUiObj: 0
     property var appUiObj: 0
 
+    function sanitizeQmlForQt6(qmlStr) {
+        if (!qmlStr || qmlStr.length === 0) return qmlStr;
+        var res = qmlStr;
+        res = res.replace(/\bimport\s+QtQuick\.Dialogs\s+1(?:\.\d+)?(\s+as\s+\w+)?/g, "import QtQuick.Dialogs$1");
+        res = res.replace(/\bimport\s+QtGraphicalEffects(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import Qt5Compat.GraphicalEffects$1");
+        res = res.replace(/\bimport\s+QtQuick\.Controls\s+1(?:\.\d+)?(\s+as\s+\w+)?/g, "import QtQuick.Controls$1");
+        res = res.replace(/\bimport\s+Vedder\.vesc\.\w+(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import Vedder.vesc$1");
+        res = res.replace(/\bimport\s+Qt\.labs\.settings(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import QtCore$1");
+        res = res.replace(/\bimport\s+(Qt\.labs\.\w+)\s+\d+(?:\.\d+)?(\s+as\s+\w+)?/g, "import $1$2");
+        res = res.replace(/\bselectExisting\s*:\s*true\b/g, "fileMode: FileDialog.OpenFile");
+        res = res.replace(/\bselectExisting\s*:\s*false\b/g, "fileMode: FileDialog.SaveFile");
+        res = res.replace(/\bselectExisting\s*:\s*\w+/g, "// selectExisting removed in Qt6");
+        res = res.replace(/\bsidebarVisible\s*:\s*(?:true|false|\w+)/g, "// sidebarVisible removed in Qt6");
+        return res;
+    }
+
     function updateHwAppUi () {
         if (hwUiObj && typeof hwUiObj.destroy === "function") {
             try { hwUiObj.destroy() } catch(e) {}
@@ -373,7 +389,8 @@ Item {
                     uiHwPage.visible = true
                 }
                 if (uiHw) {
-                    hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
+                    var hwCode = sanitizeQmlForQt6(VescIf.qmlHw())
+                    hwUiObj = Qt.createQmlObject(hwCode, uiHw, "HwUi")
                 }
                 if (hwUiObj) {
                     uiHwButton.text = "HwUi"
@@ -405,7 +422,8 @@ Item {
                     uiAppPage.visible = true
                 }
                 if (uiApp) {
-                    appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
+                    var appCode = sanitizeQmlForQt6(VescIf.qmlApp())
+                    appUiObj = Qt.createQmlObject(appCode, uiApp, "AppUi")
                 }
                 if (appUiObj) {
                     uiAppButton.text = "AppUi"

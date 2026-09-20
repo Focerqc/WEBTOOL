@@ -5790,14 +5790,73 @@ bool VescInterface::customConfigAsyncLoading()
     return m_customConfigAsyncLoading;
 }
 
+QString VescInterface::adaptQmlToQt6(const QString &qml)
+{
+    if (qml.isEmpty()) {
+        return qml;
+    }
+
+    QString res = qml;
+
+    // 1. QtQuick.Dialogs:
+    // Qt 5 packages used e.g. "import QtQuick.Dialogs 1.3 as Dl" or "import QtQuick.Dialogs 1.2"
+    // In Qt 6, QtQuick.Dialogs is versionless or 6.x.
+    static const QRegularExpression reDialogs(R"(\bimport\s+QtQuick\.Dialogs\s+1(?:\.\d+)?(\s+as\s+\w+)?)");
+    res.replace(reDialogs, R"(import QtQuick.Dialogs\1)");
+
+    // 2. QtGraphicalEffects:
+    // In Qt 6, QtGraphicalEffects was moved to Qt5Compat.GraphicalEffects.
+    static const QRegularExpression reEffects(R"(\bimport\s+QtGraphicalEffects(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
+    res.replace(reEffects, R"(import Qt5Compat.GraphicalEffects\1)");
+
+    // 3. QtQuick.Controls 1.x:
+    // In Qt 6, Controls 1.x is removed; redirect to QtQuick.Controls.
+    static const QRegularExpression reControls(R"(\bimport\s+QtQuick\.Controls\s+1(?:\.\d+)?(\s+as\s+\w+)?)");
+    res.replace(reControls, R"(import QtQuick.Controls\1)");
+
+    // 4. Vedder.vesc.*:
+    // In Qt 6, all C++ types are registered under the module "Vedder.vesc".
+    static const QRegularExpression reVedder(R"(\bimport\s+Vedder\.vesc\.\w+(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
+    res.replace(reVedder, R"(import Vedder.vesc\1)");
+
+    // 5. Qt.labs.settings:
+    // In Qt 6, Settings was moved into QtCore ("import QtCore").
+    static const QRegularExpression reSettings(R"(\bimport\s+Qt\.labs\.settings(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
+    res.replace(reSettings, R"(import QtCore\1)");
+
+    // 6. Qt.labs.* generic version stripping (e.g. Qt.labs.folderlistmodel 2.1)
+    static const QRegularExpression reLabs(R"(\bimport\s+(Qt\.labs\.\w+)\s+\d+(?:\.\d+)?(\s+as\s+\w+)?)");
+    res.replace(reLabs, R"(import \1\2)");
+
+    // 7. FileDialog Qt 5 vs Qt 6 property differences:
+    // In Qt 6 FileDialog, "selectExisting" was removed and replaced by "fileMode".
+    static const QRegularExpression reSelectExistingTrue(R"(\bselectExisting\s*:\s*true\b)");
+    res.replace(reSelectExistingTrue, R"(fileMode: FileDialog.OpenFile)");
+
+    static const QRegularExpression reSelectExistingFalse(R"(\bselectExisting\s*:\s*false\b)");
+    res.replace(reSelectExistingFalse, R"(fileMode: FileDialog.SaveFile)");
+
+    static const QRegularExpression reSelectExistingGeneric(R"(\bselectExisting\s*:\s*\w+)");
+    res.replace(reSelectExistingGeneric, R"(// selectExisting removed in Qt6)");
+
+    static const QRegularExpression reSidebarVisible(R"(\bsidebarVisible\s*:\s*(?:true|false|\w+))");
+    res.replace(reSidebarVisible, R"(// sidebarVisible removed in Qt6)");
+
+    if (res != qml) {
+        qDebug().noquote() << "[QML Adapter] Adapted legacy Qt5 QML imports for Qt6 compatibility.";
+    }
+
+    return res;
+}
+
 QString VescInterface::qmlHw()
 {
-    return mQmlHwLoaded ? mQmlHw : "";
+    return mQmlHwLoaded ? adaptQmlToQt6(mQmlHw) : "";
 }
 
 QString VescInterface::qmlApp()
 {
-    return mQmlAppLoaded ? mQmlApp : "";
+    return mQmlAppLoaded ? adaptQmlToQt6(mQmlApp) : "";
 }
 
 void VescInterface::updateFwRx(bool fwRx)
@@ -5858,7 +5917,7 @@ void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QStrin
         if (f.exists() && f.open(QIODevice::ReadOnly)) {
             QByteArray data = f.readAll();
             f.close();
-            mQmlHw = QString::fromUtf8(qUncompress(data));
+            mQmlHw = adaptQmlToQt6(QString::fromUtf8(qUncompress(data)));
             mQmlHwLoaded = !mQmlHw.isEmpty();
             if (mQmlHwLoaded) {
                 emitStatusMessage("Got cached qmlui HW", true);
@@ -5871,7 +5930,7 @@ void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QStrin
         if (f.exists() && f.open(QIODevice::ReadOnly)) {
             QByteArray data = f.readAll();
             f.close();
-            mQmlApp = QString::fromUtf8(qUncompress(data));
+            mQmlApp = adaptQmlToQt6(QString::fromUtf8(qUncompress(data)));
             mQmlAppLoaded = !mQmlApp.isEmpty();
             if (mQmlAppLoaded) {
                 emitStatusMessage("Got cached qmlui App", true);
@@ -5957,7 +6016,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
         QByteArray uncompressed = qUncompress(m_qmlBuffer);
         if (!uncompressed.isEmpty()) {
             if (m_qmlFetchingHw) {
-                mQmlHw = QString::fromUtf8(uncompressed);
+                mQmlHw = adaptQmlToQt6(QString::fromUtf8(uncompressed));
                 mQmlHwLoaded = true;
                 emitStatusMessage("Got qmlui HW", true);
                 if (!m_qmlCacheDir.isEmpty()) {
@@ -5969,7 +6028,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
                     }
                 }
             } else {
-                mQmlApp = QString::fromUtf8(uncompressed);
+                mQmlApp = adaptQmlToQt6(QString::fromUtf8(uncompressed));
                 mQmlAppLoaded = true;
                 emitStatusMessage("Got qmlui App", true);
                 if (!m_qmlCacheDir.isEmpty()) {

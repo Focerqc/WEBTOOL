@@ -972,6 +972,29 @@ ApplicationWindow {
     property var hwUiObj: 0
     property var appUiObj: 0
 
+    function sanitizeQmlForQt6(qmlStr) {
+        if (!qmlStr || qmlStr.length === 0) return qmlStr;
+        var res = qmlStr;
+        // 1. QtQuick.Dialogs 1.x -> QtQuick.Dialogs
+        res = res.replace(/\bimport\s+QtQuick\.Dialogs\s+1(?:\.\d+)?(\s+as\s+\w+)?/g, "import QtQuick.Dialogs$1");
+        // 2. QtGraphicalEffects -> Qt5Compat.GraphicalEffects
+        res = res.replace(/\bimport\s+QtGraphicalEffects(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import Qt5Compat.GraphicalEffects$1");
+        // 3. QtQuick.Controls 1.x -> QtQuick.Controls
+        res = res.replace(/\bimport\s+QtQuick\.Controls\s+1(?:\.\d+)?(\s+as\s+\w+)?/g, "import QtQuick.Controls$1");
+        // 4. Vedder.vesc.* -> Vedder.vesc
+        res = res.replace(/\bimport\s+Vedder\.vesc\.\w+(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import Vedder.vesc$1");
+        // 5. Qt.labs.settings -> QtCore
+        res = res.replace(/\bimport\s+Qt\.labs\.settings(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?/g, "import QtCore$1");
+        // 6. Generic Qt.labs version stripping
+        res = res.replace(/\bimport\s+(Qt\.labs\.\w+)\s+\d+(?:\.\d+)?(\s+as\s+\w+)?/g, "import $1$2");
+        // 7. FileDialog properties
+        res = res.replace(/\bselectExisting\s*:\s*true\b/g, "fileMode: FileDialog.OpenFile");
+        res = res.replace(/\bselectExisting\s*:\s*false\b/g, "fileMode: FileDialog.SaveFile");
+        res = res.replace(/\bselectExisting\s*:\s*\w+/g, "// selectExisting removed in Qt6");
+        res = res.replace(/\bsidebarVisible\s*:\s*(?:true|false|\w+)/g, "// sidebarVisible removed in Qt6");
+        return res;
+    }
+
     function updateHwAppUi () {
         if (hwUiObj && typeof hwUiObj.destroy === "function") {
             try { hwUiObj.destroy() } catch(e) {}
@@ -983,35 +1006,9 @@ ApplicationWindow {
             appUiObj = 0
         }
 
-        if (mainSwipeView && uiHwPage) {
-            mainSwipeView.removeItem(uiHwPage)
-        }
-        if (tabBar && uiHwButton) {
-            tabBar.removeItem(uiHwButton)
-        }
-        if (uiHwPage) {
-            uiHwPage.visible = false
-        }
-
-        if (mainSwipeView && uiAppPage) {
-            mainSwipeView.removeItem(uiAppPage)
-        }
-        if (tabBar && uiAppButton) {
-            tabBar.removeItem(uiAppButton)
-        }
-        if (uiAppPage) {
-            uiAppPage.visible = false
-        }
-
-        if (mainSwipeView) {
-            mainSwipeView.interactive = true
-        }
-        if (headerBar) {
-            headerBar.visible = true
-        }
-        if (tabBar) {
-            tabBar.enabled = true
-        }
+        if (mainSwipeView) mainSwipeView.interactive = true
+        if (headerBar) headerBar.visible = true
+        if (tabBar) tabBar.enabled = true
 
         console.log("[QML_LOAD] updateHwAppUi() called. Connected:", VescIf.isPortConnected(),
                     "qmlHwLoaded:", VescIf.qmlHwLoaded(), "qmlAppLoaded:", VescIf.qmlAppLoaded())
@@ -1024,19 +1021,19 @@ ApplicationWindow {
             }
 
             try {
-                console.log("[QML_LOAD] Instantiating HwUi QML object (len=" + VescIf.qmlHw().length + ")...")
-                hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
+                var hwCode = sanitizeQmlForQt6(VescIf.qmlHw())
+                console.log("[QML_LOAD] Instantiating HwUi QML object (len=" + hwCode.length + ")...")
+                hwUiObj = Qt.createQmlObject(hwCode, uiHw, "HwUi")
                 if (hwUiObj) {
-                    if (uiHwButton) {
-                        uiHwButton.text = "HwUi"
-                        if (hwUiObj.tabTitle) {
-                            uiHwButton.text = hwUiObj.tabTitle
-                        }
+                    if (mainSwipeView) mainSwipeView.insertItem(1, uiHwPage)
+                    if (tabBar) tabBar.insertItem(1, uiHwButton)
+                    uiHwPage.visible = true
+
+                    uiHwButton.text = "HwUi"
+                    if (hwUiObj.tabTitle) {
+                        uiHwButton.text = hwUiObj.tabTitle
                     }
-                    if (mainSwipeView && uiHwPage) mainSwipeView.insertItem(1, uiHwPage)
-                    if (tabBar && uiHwButton) tabBar.insertItem(1, uiHwButton)
-                    if (uiHwPage) uiHwPage.visible = true
-                    console.log("[QML_LOAD] HwUi inserted into tabs! TabTitle:", (uiHwButton ? uiHwButton.text : "HwUi"))
+                    console.log("[QML_LOAD] HwUi inserted into tabs! TabTitle:", uiHwButton.text)
 
                     if (VescIf.getLastFwRxParams().qmlHwFullscreen && mainSwipeView) {
                         mainSwipeView.setCurrentIndex(0)
@@ -1048,6 +1045,14 @@ ApplicationWindow {
             } catch (err) {
                 console.error("[QML_LOAD] Failed to create HwUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
             }
+        } else {
+            if (uiHwPage) {
+                uiHwPage.visible = false
+                uiHwPage.parent = null
+            }
+            if (uiHwButton) {
+                uiHwButton.parent = null
+            }
         }
 
         if (VescIf.isPortConnected() && VescIf.qmlAppLoaded()) {
@@ -1058,20 +1063,20 @@ ApplicationWindow {
             }
 
             try {
-                console.log("[QML_LOAD] Instantiating AppUi QML object (len=" + VescIf.qmlApp().length + ")...")
-                appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
+                var appCode = sanitizeQmlForQt6(VescIf.qmlApp())
+                console.log("[QML_LOAD] Instantiating AppUi QML object (len=" + appCode.length + ")...")
+                appUiObj = Qt.createQmlObject(appCode, uiApp, "AppUi")
                 if (appUiObj) {
-                    if (uiAppButton) {
-                        uiAppButton.text = "AppUi"
-                        if (appUiObj.tabTitle) {
-                            uiAppButton.text = appUiObj.tabTitle
-                        }
-                    }
                     var appIdx = (uiHwPage && uiHwPage.visible) ? 2 : 1
-                    if (mainSwipeView && uiAppPage) mainSwipeView.insertItem(appIdx, uiAppPage)
-                    if (tabBar && uiAppButton) tabBar.insertItem(appIdx, uiAppButton)
-                    if (uiAppPage) uiAppPage.visible = true
-                    console.log("[QML_LOAD] AppUi inserted into tabs! TabTitle:", (uiAppButton ? uiAppButton.text : "AppUi"))
+                    if (mainSwipeView) mainSwipeView.insertItem(appIdx, uiAppPage)
+                    if (tabBar) tabBar.insertItem(appIdx, uiAppButton)
+                    uiAppPage.visible = true
+
+                    uiAppButton.text = "AppUi"
+                    if (appUiObj.tabTitle) {
+                        uiAppButton.text = appUiObj.tabTitle
+                    }
+                    console.log("[QML_LOAD] AppUi inserted into tabs! TabTitle:", uiAppButton.text)
 
                     if (VescIf.getLastFwRxParams().qmlAppFullscreen && mainSwipeView) {
                         mainSwipeView.setCurrentIndex(0)
@@ -1082,6 +1087,14 @@ ApplicationWindow {
                 }
             } catch (err) {
                 console.error("[QML_LOAD] Failed to create AppUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
+            }
+        } else {
+            if (uiAppPage) {
+                uiAppPage.visible = false
+                uiAppPage.parent = null
+            }
+            if (uiAppButton) {
+                uiAppButton.parent = null
             }
         }
     }

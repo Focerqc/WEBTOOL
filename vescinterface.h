@@ -292,6 +292,7 @@ public:
     Q_INVOKABLE bool customConfigAsyncLoading();
     Q_INVOKABLE QString qmlHw();
     Q_INVOKABLE QString qmlApp();
+    Q_INVOKABLE static QString adaptQmlToQt6(const QString &qml);
 
     Q_INVOKABLE QString getLastTcpHubVescID() const;
     Q_INVOKABLE QString getLastTcpHubVescPass() const;
