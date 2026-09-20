@@ -1109,6 +1109,12 @@ ApplicationWindow {
         repeat: true
         onTriggered: {
             confCustomRetries++
+            console.log("[CUSTOM_CFG] confCustomTimer tick #" + confCustomRetries +
+                        " loaderExists:", !!confCustomLoader,
+                        "loaderStatus:", confCustomLoader ? confCustomLoader.status : "N/A",
+                        "(Ready=" + Loader.Ready + " Loading=" + Loader.Loading + " Null=" + Loader.Null + " Error=" + Loader.Error + ")",
+                        "confCustomPage.parent:", confCustomPage ? confCustomPage.parent : "null",
+                        "confCustomPage.visible:", confCustomPage ? confCustomPage.visible : "N/A")
             if (confCustomLoader && confCustomLoader.status === Loader.Ready) {
                 stop()
                 confCustomRetries = 0
@@ -1119,8 +1125,6 @@ ApplicationWindow {
 
                 if (hasCust) {
                     if (confCustomPage && !confCustomPage.visible) {
-                        if (mainSwipeView) mainSwipeView.removeItem(confCustomPage)
-                        if (tabBar) tabBar.removeItem(confCustomButton)
                         if (mainSwipeView) mainSwipeView.insertItem(4, confCustomPage)
                         if (tabBar) tabBar.insertItem(4, confCustomButton)
                         confCustomPage.visible = true
@@ -1136,15 +1140,14 @@ ApplicationWindow {
                 } else {
                     if (confCustomPage) {
                         confCustomPage.visible = false
-                        if (mainSwipeView) mainSwipeView.removeItem(confCustomPage)
-                        confCustomPage.parent = appWindow.contentItem
+                        confCustomPage.parent = null
                     }
                     if (confCustomButton) {
-                        if (tabBar) tabBar.removeItem(confCustomButton)
-                        confCustomButton.parent = appWindow.contentItem
+                        confCustomButton.parent = null
                     }
                 }
             } else if (!confCustomLoader || confCustomRetries > 20) {
+                console.warn("[CUSTOM_CFG] confCustomTimer giving up after", confCustomRetries, "retries. loaderExists:", !!confCustomLoader)
                 stop()
                 confCustomRetries = 0
             }
@@ -1217,29 +1220,20 @@ ApplicationWindow {
             if (rx) {
                 if (VescIf.getFwSupportsConfiguration()) {
                     if (confPageMotor && !confPageMotor.visible) {
-                        if (mainSwipeView && confPageApp) mainSwipeView.removeItem(confPageApp)
-                        if (tabBar && confAppButton) tabBar.removeItem(confAppButton)
-                        if (mainSwipeView && confPageMotor) mainSwipeView.removeItem(confPageMotor)
-                        if (tabBar && confMotorButton) tabBar.removeItem(confMotorButton)
-
-                        if (mainSwipeView && confPageApp) mainSwipeView.insertItem(4, confPageApp)
-                        if (tabBar && confAppButton) tabBar.insertItem(4, confAppButton)
-                        if (mainSwipeView && confPageMotor) mainSwipeView.insertItem(4, confPageMotor)
-                        if (tabBar && confMotorButton) tabBar.insertItem(4, confMotorButton)
-                        if (confPageMotor) confPageMotor.visible = true
-                        if (confPageApp) confPageApp.visible = true
+                        mainSwipeView.insertItem(4, confPageApp)
+                        tabBar.insertItem(4, confAppButton)
+                        mainSwipeView.insertItem(4, confPageMotor)
+                        tabBar.insertItem(4, confMotorButton)
+                        confPageMotor.visible = true
+                        confPageApp.visible = true
                     }
                 } else {
-                    if (confPageMotor) confPageMotor.visible = false
-                    if (confPageApp) confPageApp.visible = false
-                    if (mainSwipeView && confPageMotor) mainSwipeView.removeItem(confPageMotor)
-                    if (tabBar && confMotorButton) tabBar.removeItem(confMotorButton)
-                    if (mainSwipeView && confPageApp) mainSwipeView.removeItem(confPageApp)
-                    if (tabBar && confAppButton) tabBar.removeItem(confAppButton)
-                    if (confPageMotor) confPageMotor.parent = appWindow.contentItem
-                    if (confPageApp) confPageApp.parent = appWindow.contentItem
-                    if (confMotorButton) confMotorButton.parent = appWindow.contentItem
-                    if (confAppButton) confAppButton.parent = appWindow.contentItem
+                    confPageMotor.visible = false
+                    confPageApp.visible = false
+                    confPageMotor.parent = null
+                    confPageApp.parent = null
+                    confMotorButton.parent = null
+                    confAppButton.parent = null
                 }
 
                 if (VescIf.getFwSupportsConfiguration()) {

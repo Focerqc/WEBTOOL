@@ -34,25 +34,36 @@ Item {
     property var pendingCanDevs: []
     property int currentCanDev: -1
 
+    property int currentCanDevRetry: 0
+
     Timer {
         id: canQueryTimeoutTimer
         interval: 1200
         repeat: false
         onTriggered: {
             if (currentCanDev !== -1) {
-                console.warn("[CAN_SCREEN] Timeout waiting for FW version from CAN ID:", currentCanDev)
-                VescIf.canTmpOverrideEnd()
-                currentCanDev = -1
-                mCommands.resetFwTimeout()
-                canQueryNextTimer.interval = 50
-                canQueryNextTimer.start()
+                if (currentCanDevRetry < 1) {
+                    currentCanDevRetry++
+                    console.warn("[CAN_SCREEN] Timeout waiting for FW version from CAN ID:", currentCanDev, "- Retrying (" + currentCanDevRetry + "/1)...")
+                    mCommands.resetFwTimeout()
+                    mCommands.getFwVersion()
+                    canQueryTimeoutTimer.restart()
+                } else {
+                    console.warn("[CAN_SCREEN] Timeout waiting for FW version from CAN ID:", currentCanDev, "after retry.")
+                    VescIf.canTmpOverrideEnd()
+                    currentCanDev = -1
+                    currentCanDevRetry = 0
+                    mCommands.resetFwTimeout()
+                    canQueryNextTimer.interval = 100
+                    canQueryNextTimer.start()
+                }
             }
         }
     }
 
     Timer {
         id: canQueryNextTimer
-        interval: 50
+        interval: 100
         repeat: false
         onTriggered: {
             queryNextCanDevice()
@@ -65,6 +76,7 @@ Item {
         if (currentCanDev !== -1) {
             VescIf.canTmpOverrideEnd()
             currentCanDev = -1
+            currentCanDevRetry = 0
             mCommands.resetFwTimeout()
         }
         pendingCanDevs = []
@@ -78,11 +90,13 @@ Item {
 
         if (pendingCanDevs.length === 0) {
             currentCanDev = -1
+            currentCanDevRetry = 0
             console.log("[CAN_SCREEN] All CAN device names resolved successfully.")
             return
         }
 
         currentCanDev = pendingCanDevs.shift()
+        currentCanDevRetry = 0
         console.log("[CAN_SCREEN] Querying FW version for CAN ID:", currentCanDev)
         VescIf.canTmpOverride(true, currentCanDev)
         mCommands.resetFwTimeout()
@@ -470,6 +484,7 @@ Item {
                 canQueryTimeoutTimer.stop()
                 var devId = currentCanDev
                 currentCanDev = -1
+                currentCanDevRetry = 0
                 VescIf.canTmpOverrideEnd()
 
                 console.log("[CAN_SCREEN] Received FW version for CAN ID:", devId,
