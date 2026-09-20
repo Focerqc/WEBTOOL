@@ -1567,6 +1567,16 @@ bool Utility::getFwVersionBlocking(VescInterface *vesc, FW_RX_PARAMS *params, in
 
     vesc->reconnectFwVersionReceived();
 
+    if (!res && vesc) {
+        FW_RX_PARAMS lastParams = vesc->getLastFwRxParams();
+        if (lastParams.major >= 0) {
+            if (params) {
+                *params = lastParams;
+            }
+            res = true;
+        }
+    }
+
     return res;
 }
 
@@ -1581,8 +1591,10 @@ bool Utility::getFwVersionBlockingCan(VescInterface *vesc, FW_RX_PARAMS *params,
 bool Utility::isConnectedToHwVesc(VescInterface *vesc)
 {
     FW_RX_PARAMS paramsRx;
-    getFwVersionBlocking(vesc, &paramsRx);
-    return paramsRx.hwType == HW_TYPE_VESC;
+    if (getFwVersionBlocking(vesc, &paramsRx)) {
+        return paramsRx.hwType == HW_TYPE_VESC;
+    }
+    return vesc && vesc->getLastFwRxParams().hwType == HW_TYPE_VESC;
 }
 
 FW_RX_PARAMS Utility::getFwVersionBlocking(VescInterface *vesc)
