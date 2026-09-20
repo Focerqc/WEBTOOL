@@ -3144,6 +3144,10 @@ bool VescInterface::isIgnoringCanChanges()
  */
 void VescInterface::canTmpOverride(bool fwdCan, int canId)
 {
+    if (m_qmlAsyncLoading || m_customConfigAsyncLoading) {
+        qWarning().noquote() << "[VESC_IF] Warning: canTmpOverride called while async loading is in progress! fwdCan:" << fwdCan << "canId:" << canId;
+    }
+
     if (!mCanTmpFwdActive) {
         mCanTmpFwdActive = true;
         mCanTmpFwdSendCanLast = mCommands->getSendCan();
@@ -3165,6 +3169,26 @@ void VescInterface::canTmpOverrideEnd()
         mCommands->setSendCan(mCanTmpFwdSendCanLast, mCanTmpFwdIdLast);
         ignoreCanChange(false);
     }
+}
+
+void VescInterface::setSendCanAndReload(bool sendCan, int canId)
+{
+    if (canId < 0) {
+        sendCan = false;
+    }
+    qDebug().noquote() << QString("[VESC_IF] Switching CAN target: sendCan=%1, canId=%2. Reloading firmware version...").arg(sendCan).arg(canId);
+    mCommands->setSendCan(sendCan, canId);
+    updateFwRx(false);
+    mCommands->resetFwTimeout();
+    mCommands->getFwVersion();
+}
+
+void VescInterface::reloadFirmwareVersion()
+{
+    qDebug().noquote() << "[VESC_IF] Reloading firmware version for current target...";
+    updateFwRx(false);
+    mCommands->resetFwTimeout();
+    mCommands->getFwVersion();
 }
 
 bool VescInterface::tcpServerStart(int port)
@@ -5224,6 +5248,11 @@ bool VescInterface::hasWebFsBackupApi()
     return webfs_is_supported() != 0;
 }
 
+bool VescInterface::isDirectoryPickerSupported()
+{
+    return webfs_is_directory_picker_supported() != 0;
+}
+
 QString VescInterface::getSavedBackupFolderName()
 {
     return QString::fromUtf8(webfs_get_saved_folder_name());
@@ -5548,6 +5577,125 @@ bool VescInterface::exportXml(ConfigParams *cfg, QString configName, QString def
 #endif
 }
 
+void VescInterface::exportAllXmls(int canId, QString customName)
+{
+    if (canId >= 0) {
+        mCommands->setSendCan(true, canId);
+    }
+
+    QString devName = customName.trimmed();
+    if (devName.isEmpty()) {
+        if (canId >= 0) {
+            devName = QString("CAN%1").arg(canId);
+        } else if (!mLastFwParams.hw.isEmpty()) {
+            devName = mLastFwParams.hw;
+        } else {
+            devName = "VESC";
+        }
+    }
+    devName.replace(" ", "_").replace("(", "").replace(")", "");
+
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss");
+    QString zipFilename = QString("vesc_backup_%1_%2.zip").arg(devName).arg(timestamp);
+
+    QJsonObject filesMap;
+
+    if (mMcConfig) {
+        QString xml = mMcConfig->getXmlString("MCConfiguration");
+        if (!xml.isEmpty()) {
+            filesMap.insert("mcconf.xml", xml);
+        }
+    }
+
+    if (mAppConfig) {
+        QString xml = mAppConfig->getXmlString("APPConfiguration");
+        if (!xml.isEmpty()) {
+            filesMap.insert("appconf.xml", xml);
+        }
+    }
+
+    if (customConfigNum() > 0 && customConfig(0) != nullptr) {
+        QString hwName = customConfig(0)->getLongName("hw_name");
+        QString customFn = (hwName.isEmpty() ? "refloat" : hwName.toLower().replace(QRegularExpression("[^a-z0-9]"), "_")) + "_customconf.xml";
+        QString xml = customConfig(0)->getXmlString("CustomConfiguration");
+        if (!xml.isEmpty()) {
+            filesMap.insert(customFn, xml);
+        }
+    }
+
+    QJsonObject infoObj;
+    infoObj.insert("deviceName", devName);
+    infoObj.insert("hardware", mLastFwParams.hw);
+    infoObj.insert("firmware", QString("%1.%2").arg(mLastFwParams.major).arg(mLastFwParams.minor));
+    infoObj.insert("uuid", mUuidStr);
+    infoObj.insert("canId", canId);
+    infoObj.insert("timestamp", timestamp);
+    infoObj.insert("dateFormatted", QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
+    QJsonDocument infoDoc(infoObj);
+    filesMap.insert("backup_info.json", QString::fromUtf8(infoDoc.toJson(QJsonDocument::Indented)));
+
+    QJsonDocument doc(filesMap);
+    QByteArray filesJson = doc.toJson(QJsonDocument::Compact);
+
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    webfs_download_zip_bundle(zipFilename.toUtf8().constData(), filesJson.constData());
+    emitStatusMessage(tr("Exported XML ZIP bundle: %1").arg(zipFilename), true);
+#else
+    emitStatusMessage(tr("Exported XML configuration files"), true);
+#endif
+}
+
+void VescInterface::exportBackupXmls(QString subfolderName)
+{
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    struct ExpCtx {
+        VescInterface *self;
+        QString subfolder;
+    };
+    auto ctx = new ExpCtx{this, subfolderName};
+
+    webfs_read_backup(subfolderName.toUtf8().constData(), [](int success, const char *jsonData, void *userData) {
+        auto d = static_cast<ExpCtx*>(userData);
+        if (!d || !d->self) {
+            delete d;
+            return;
+        }
+        auto self = d->self;
+        QString subfolder = d->subfolder;
+        delete d;
+
+        if (!success || !jsonData) {
+            self->emitStatusMessage(tr("Failed to read backup for export"), false);
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray(jsonData));
+        if (!doc.isObject()) return;
+        QJsonObject obj = doc.object();
+
+        QJsonObject filesMap;
+        QString mcXml = obj.value("mcconf").toString();
+        QString appXml = obj.value("appconf").toString();
+        QString customXml = obj.value("customconf").toString();
+        QString infoJson = obj.value("info").toString();
+
+        if (!mcXml.isEmpty()) filesMap.insert("mcconf.xml", mcXml);
+        if (!appXml.isEmpty()) filesMap.insert("appconf.xml", appXml);
+        if (!customXml.isEmpty()) filesMap.insert("customconf.xml", customXml);
+        if (!infoJson.isEmpty()) filesMap.insert("backup_info.json", infoJson);
+
+        QJsonDocument outDoc(filesMap);
+        QByteArray filesJson = outDoc.toJson(QJsonDocument::Compact);
+
+        QString zipFilename = subfolder + ".zip";
+        webfs_download_zip_bundle(zipFilename.toUtf8().constData(), filesJson.constData());
+        self->emitStatusMessage(tr("Exported XML ZIP for %1").arg(subfolder), true);
+    }, ctx);
+#else
+    (void)subfolderName;
+#endif
+}
+
 void VescInterface::importXml(ConfigParams *cfg, QString configName)
 {
     if (!cfg) return;
@@ -5632,88 +5780,42 @@ bool VescInterface::qmlAppLoaded()
     return mQmlAppLoaded;
 }
 
-QString VescInterface::adaptQmlToQt6(const QString &qml)
+bool VescInterface::qmlAsyncLoading()
 {
-    if (qml.isEmpty()) {
-        return qml;
-    }
+    return m_qmlAsyncLoading;
+}
 
-    QString res = qml;
-
-    // 1. QtQuick.Dialogs:
-    // Qt 5 packages used e.g. "import QtQuick.Dialogs 1.3 as Dl" or "import QtQuick.Dialogs 1.2"
-    // In Qt 6, QtQuick.Dialogs is versionless or 6.x.
-    static const QRegularExpression reDialogs(R"(\bimport\s+QtQuick\.Dialogs\s+1(?:\.\d+)?(\s+as\s+\w+)?)");
-    res.replace(reDialogs, R"(import QtQuick.Dialogs\1)");
-
-    // 2. QtGraphicalEffects:
-    // In Qt 6, QtGraphicalEffects was moved to Qt5Compat.GraphicalEffects.
-    static const QRegularExpression reEffects(R"(\bimport\s+QtGraphicalEffects(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
-    res.replace(reEffects, R"(import Qt5Compat.GraphicalEffects\1)");
-
-    // 3. QtQuick.Controls 1.x:
-    // In Qt 6, Controls 1.x is removed; redirect to QtQuick.Controls.
-    static const QRegularExpression reControls(R"(\bimport\s+QtQuick\.Controls\s+1(?:\.\d+)?(\s+as\s+\w+)?)");
-    res.replace(reControls, R"(import QtQuick.Controls\1)");
-
-    // 4. Vedder.vesc.*:
-    // In Qt 6, all C++ types are registered under the module "Vedder.vesc".
-    static const QRegularExpression reVedder(R"(\bimport\s+Vedder\.vesc\.\w+(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
-    res.replace(reVedder, R"(import Vedder.vesc\1)");
-
-    // 5. Qt.labs.settings:
-    // In Qt 6, Settings was moved into QtCore ("import QtCore").
-    static const QRegularExpression reSettings(R"(\bimport\s+Qt\.labs\.settings(?:\s+1(?:\.\d+)?)?(\s+as\s+\w+)?)");
-    res.replace(reSettings, R"(import QtCore\1)");
-
-    // 6. Qt.labs.* generic version stripping (e.g. Qt.labs.folderlistmodel 2.1)
-    static const QRegularExpression reLabs(R"(\bimport\s+(Qt\.labs\.\w+)\s+\d+(?:\.\d+)?(\s+as\s+\w+)?)");
-    res.replace(reLabs, R"(import \1\2)");
-
-    // 7. FileDialog Qt 5 vs Qt 6 property differences:
-    // In Qt 6 FileDialog, "selectExisting" was removed and replaced by "fileMode".
-    static const QRegularExpression reSelectExistingTrue(R"(\bselectExisting\s*:\s*true\b)");
-    res.replace(reSelectExistingTrue, R"(fileMode: FileDialog.OpenFile)");
-
-    static const QRegularExpression reSelectExistingFalse(R"(\bselectExisting\s*:\s*false\b)");
-    res.replace(reSelectExistingFalse, R"(fileMode: FileDialog.SaveFile)");
-
-    static const QRegularExpression reSelectExistingGeneric(R"(\bselectExisting\s*:\s*\w+)");
-    res.replace(reSelectExistingGeneric, R"(// selectExisting removed in Qt6)");
-
-    static const QRegularExpression reSidebarVisible(R"(\bsidebarVisible\s*:\s*(?:true|false|\w+))");
-    res.replace(reSidebarVisible, R"(// sidebarVisible removed in Qt6)");
-
-    if (res != qml) {
-        qDebug() << "[QML Adapter] Adapted legacy Qt5 QML imports for Qt6 compatibility.";
-    }
-
-    return res;
+bool VescInterface::customConfigAsyncLoading()
+{
+    return m_customConfigAsyncLoading;
 }
 
 QString VescInterface::qmlHw()
 {
-    return mQmlHwLoaded ? adaptQmlToQt6(mQmlHw) : "";
+    return mQmlHwLoaded ? mQmlHw : "";
 }
 
 QString VescInterface::qmlApp()
 {
-    return mQmlAppLoaded ? adaptQmlToQt6(mQmlApp) : "";
+    return mQmlAppLoaded ? mQmlApp : "";
 }
 
 void VescInterface::updateFwRx(bool fwRx)
 {
     bool change = mFwVersionReceived != fwRx;
     mFwVersionReceived = fwRx;
-    if (change) {
-        emit fwRxChanged(mFwVersionReceived, mCommands->isLimitedMode());
-    }
 
     if (!mFwVersionReceived) {
         mCustomConfigsLoaded = false;
         mCustomConfigRxDone = false;
         mQmlHwLoaded = false;
         mQmlAppLoaded = false;
+        mQmlHw.clear();
+        mQmlApp.clear();
+        while (!mCustomConfigs.isEmpty()) {
+            mCustomConfigs.last()->deleteLater();
+            mCustomConfigs.removeLast();
+        }
         if (m_qmlAsyncLoading) {
             m_qmlAsyncLoading = false;
             if (m_qmlTimeoutTimer) {
@@ -5728,6 +5830,10 @@ void VescInterface::updateFwRx(bool fwRx)
             }
             m_customConfigBuffer.clear();
         }
+    }
+
+    if (change) {
+        emit fwRxChanged(mFwVersionReceived, mCommands->isLimitedMode());
     }
 }
 
@@ -5752,7 +5858,7 @@ void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QStrin
         if (f.exists() && f.open(QIODevice::ReadOnly)) {
             QByteArray data = f.readAll();
             f.close();
-            mQmlHw = adaptQmlToQt6(QString::fromUtf8(qUncompress(data)));
+            mQmlHw = QString::fromUtf8(qUncompress(data));
             mQmlHwLoaded = !mQmlHw.isEmpty();
             if (mQmlHwLoaded) {
                 emitStatusMessage("Got cached qmlui HW", true);
@@ -5765,7 +5871,7 @@ void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QStrin
         if (f.exists() && f.open(QIODevice::ReadOnly)) {
             QByteArray data = f.readAll();
             f.close();
-            mQmlApp = adaptQmlToQt6(QString::fromUtf8(qUncompress(data)));
+            mQmlApp = QString::fromUtf8(qUncompress(data));
             mQmlAppLoaded = !mQmlApp.isEmpty();
             if (mQmlAppLoaded) {
                 emitStatusMessage("Got cached qmlui App", true);
@@ -5787,14 +5893,14 @@ void VescInterface::startQmlUiAsyncLoad(const FW_RX_PARAMS &params, const QStrin
         emitStatusMessage("Requesting qmlui HW from controller...", true);
         mCommands->qmlUiHwGet(10, 0);
         if (m_qmlTimeoutTimer) {
-            m_qmlTimeoutTimer->start(1500);
+            m_qmlTimeoutTimer->start(2500);
         }
     } else {
         m_qmlFetchingHw = false;
         emitStatusMessage("Requesting qmlui App from controller...", true);
         mCommands->qmlUiAppGet(10, 0);
         if (m_qmlTimeoutTimer) {
-            m_qmlTimeoutTimer->start(1500);
+            m_qmlTimeoutTimer->start(2500);
         }
     }
 }
@@ -5824,7 +5930,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
             emitStatusMessage("Requesting qmlui App from controller...", true);
             mCommands->qmlUiAppGet(10, 0);
             if (m_qmlTimeoutTimer) {
-                m_qmlTimeoutTimer->start(1500);
+                m_qmlTimeoutTimer->start(2500);
             }
         } else {
             m_qmlAsyncLoading = false;
@@ -5851,7 +5957,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
         QByteArray uncompressed = qUncompress(m_qmlBuffer);
         if (!uncompressed.isEmpty()) {
             if (m_qmlFetchingHw) {
-                mQmlHw = adaptQmlToQt6(QString::fromUtf8(uncompressed));
+                mQmlHw = QString::fromUtf8(uncompressed);
                 mQmlHwLoaded = true;
                 emitStatusMessage("Got qmlui HW", true);
                 if (!m_qmlCacheDir.isEmpty()) {
@@ -5863,7 +5969,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
                     }
                 }
             } else {
-                mQmlApp = adaptQmlToQt6(QString::fromUtf8(uncompressed));
+                mQmlApp = QString::fromUtf8(uncompressed);
                 mQmlAppLoaded = true;
                 emitStatusMessage("Got qmlui App", true);
                 if (!m_qmlCacheDir.isEmpty()) {
@@ -5887,7 +5993,7 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
             emitStatusMessage("Requesting qmlui App from controller...", true);
             mCommands->qmlUiAppGet(10, 0);
             if (m_qmlTimeoutTimer) {
-                m_qmlTimeoutTimer->start(1500);
+                m_qmlTimeoutTimer->start(2500);
             }
         } else {
             m_qmlAsyncLoading = false;
@@ -5896,14 +6002,14 @@ void VescInterface::handleQmlUiChunk(bool isHw, int lenQml, int ofsQml, const QB
         }
     } else {
         int dataLeft = m_qmlTotalLen - m_qmlBuffer.size();
-        int chunkSize = dataLeft > 400 ? 400 : dataLeft;
+        int chunkSize = dataLeft > 384 ? 384 : dataLeft;
         if (m_qmlFetchingHw) {
             mCommands->qmlUiHwGet(chunkSize, m_qmlBuffer.size());
         } else {
             mCommands->qmlUiAppGet(chunkSize, m_qmlBuffer.size());
         }
         if (m_qmlTimeoutTimer) {
-            m_qmlTimeoutTimer->start(1500);
+            m_qmlTimeoutTimer->start(2500);
         }
     }
 }
@@ -5918,7 +6024,7 @@ void VescInterface::handleQmlUiTimeout()
     if (m_qmlRetries <= 5) {
         int currentSize = m_qmlBuffer.size();
         int dataLeft = (m_qmlTotalLen > 0) ? (m_qmlTotalLen - currentSize) : 10;
-        int chunkSize = dataLeft > 400 ? 400 : (dataLeft <= 0 ? 10 : dataLeft);
+        int chunkSize = dataLeft > 384 ? 384 : (dataLeft <= 0 ? 10 : dataLeft);
 
         if (m_qmlFetchingHw) {
             mCommands->qmlUiHwGet(chunkSize, currentSize);
@@ -5926,7 +6032,7 @@ void VescInterface::handleQmlUiTimeout()
             mCommands->qmlUiAppGet(chunkSize, currentSize);
         }
         if (m_qmlTimeoutTimer) {
-            m_qmlTimeoutTimer->start(1500);
+            m_qmlTimeoutTimer->start(2500);
         }
     } else {
         if (m_qmlTimeoutTimer) {
@@ -5945,7 +6051,7 @@ void VescInterface::handleQmlUiTimeout()
             emitStatusMessage("Requesting qmlui App from controller...", true);
             mCommands->qmlUiAppGet(10, 0);
             if (m_qmlTimeoutTimer) {
-                m_qmlTimeoutTimer->start(1500);
+                m_qmlTimeoutTimer->start(2500);
             }
         } else {
             m_qmlAsyncLoading = false;
@@ -5966,6 +6072,11 @@ void VescInterface::startCustomConfigAsyncLoad(const FW_RX_PARAMS &params, const
     m_customConfigTotalLen = -1;
 
     qDebug().noquote() << QString("[CUSTOM_CFG] Starting async load for %1 custom configs...").arg(params.customConfigNum);
+
+    while (!mCustomConfigs.isEmpty()) {
+        mCustomConfigs.last()->deleteLater();
+        mCustomConfigs.removeLast();
+    }
 
     // Fast path: load as many as possible from cache first
     while (m_customConfigCurrentIdx < params.customConfigNum) {
@@ -6030,7 +6141,7 @@ void VescInterface::startCustomConfigAsyncLoad(const FW_RX_PARAMS &params, const
     qDebug().noquote() << QString("[CUSTOM_CFG] Requesting initial chunk for custom config %1...").arg(idx);
     mCommands->customConfigGetChunk(idx, 10, 0);
     if (m_customConfigTimeoutTimer) {
-        m_customConfigTimeoutTimer->start(1500);
+        m_customConfigTimeoutTimer->start(2500);
     }
 }
 
@@ -6060,7 +6171,7 @@ void VescInterface::handleCustomConfigChunk(int confInd, int lenConf, int ofsCon
             emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
             mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
             if (m_customConfigTimeoutTimer) {
-                m_customConfigTimeoutTimer->start(1500);
+                m_customConfigTimeoutTimer->start(2500);
             }
         } else {
             m_customConfigAsyncLoading = false;
@@ -6132,7 +6243,7 @@ void VescInterface::handleCustomConfigChunk(int confInd, int lenConf, int ofsCon
             emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
             mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
             if (m_customConfigTimeoutTimer) {
-                m_customConfigTimeoutTimer->start(1500);
+                m_customConfigTimeoutTimer->start(2500);
             }
         } else {
             m_customConfigAsyncLoading = false;
@@ -6152,10 +6263,10 @@ void VescInterface::handleCustomConfigChunk(int confInd, int lenConf, int ofsCon
         }
     } else {
         int dataLeft = m_customConfigTotalLen - m_customConfigBuffer.size();
-        int chunkSize = dataLeft > 400 ? 400 : dataLeft;
+        int chunkSize = dataLeft > 384 ? 384 : dataLeft;
         mCommands->customConfigGetChunk(confInd, chunkSize, m_customConfigBuffer.size());
         if (m_customConfigTimeoutTimer) {
-            m_customConfigTimeoutTimer->start(1500);
+            m_customConfigTimeoutTimer->start(2500);
         }
     }
 }
@@ -6170,12 +6281,12 @@ void VescInterface::handleCustomConfigTimeout()
     if (m_customConfigRetries <= 5) {
         int currentSize = m_customConfigBuffer.size();
         int dataLeft = (m_customConfigTotalLen > 0) ? (m_customConfigTotalLen - currentSize) : 10;
-        int chunkSize = dataLeft > 400 ? 400 : (dataLeft <= 0 ? 10 : dataLeft);
+        int chunkSize = dataLeft > 384 ? 384 : (dataLeft <= 0 ? 10 : dataLeft);
 
         qDebug().noquote() << QString("[CUSTOM_CFG] Timeout waiting for custom config %1, retry %2/5...").arg(m_customConfigCurrentIdx).arg(m_customConfigRetries);
         mCommands->customConfigGetChunk(m_customConfigCurrentIdx, chunkSize, currentSize);
         if (m_customConfigTimeoutTimer) {
-            m_customConfigTimeoutTimer->start(1500);
+            m_customConfigTimeoutTimer->start(2500);
         }
     } else {
         if (m_customConfigTimeoutTimer) {
@@ -6194,7 +6305,7 @@ void VescInterface::handleCustomConfigTimeout()
             emitStatusMessage(QString("Requesting custom config %1 from controller...").arg(m_customConfigCurrentIdx), true);
             mCommands->customConfigGetChunk(m_customConfigCurrentIdx, 10, 0);
             if (m_customConfigTimeoutTimer) {
-                m_customConfigTimeoutTimer->start(1500);
+                m_customConfigTimeoutTimer->start(2500);
             }
         } else {
             m_customConfigAsyncLoading = false;

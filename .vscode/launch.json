@@ -2,13 +2,12 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Build & Run Local Server (Ninja + Python)",
+      "name": "Start Local Server (Instant, No Build)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/server.py",
-      "args": ["-p", "8080"],
+      "args": ["-b", "0.0.0.0", "-p", "8080"],
       "console": "integratedTerminal",
-      "preLaunchTask": "Build WASM (ninja)",
       "serverReadyAction": {
         "pattern": "Direct App URL\\s+:\\s+(https?://localhost:\\d+/[^\\s]+)",
         "uriFormat": "%s",
@@ -16,12 +15,27 @@
       }
     },
     {
-      "name": "Start Local Server (Instant, No Build)",
+      "name": "Serve for Mobile / iPad (Cloudflare HTTPS)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/server.py",
-      "args": ["-p", "8080"],
+      "args": ["-b", "0.0.0.0", "-p", "8080"],
       "console": "integratedTerminal",
+      "preLaunchTask": "Start Cloudflare HTTPS Tunnel",
+      "serverReadyAction": {
+        "pattern": "Direct App URL\\s+:\\s+(https?://localhost:\\d+/[^\\s]+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "Build & Run Local Server (Ninja + Python)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.py",
+      "args": ["-b", "0.0.0.0", "-p", "8080"],
+      "console": "integratedTerminal",
+      "preLaunchTask": "Build WASM (ninja)",
       "serverReadyAction": {
         "pattern": "Direct App URL\\s+:\\s+(https?://localhost:\\d+/[^\\s]+)",
         "uriFormat": "%s",

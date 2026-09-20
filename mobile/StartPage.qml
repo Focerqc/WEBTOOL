@@ -561,11 +561,11 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent
-            spacing: 12
+            spacing: 10
 
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: targetCol.implicitHeight + 16
+                implicitHeight: targetCol.implicitHeight + 14
                 color: Utility.getAppHexColor("darkerBackground")
                 radius: 6
                 border.width: 1
@@ -574,8 +574,8 @@ Item {
                 ColumnLayout {
                     id: targetCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 4
+                    anchors.margins: 8
+                    spacing: 3
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -592,7 +592,7 @@ Item {
                     }
 
                     Text {
-                        text: "Backs up Motor (mcconf.xml), App (appconf.xml), and Custom/Refloat (customconf.xml) configurations directly to your local computer folder."
+                        text: "Backs up Motor (mcconf.xml), App (appconf.xml), and Custom/Refloat (customconf.xml) configurations."
                         color: Utility.getAppHexColor("lightText")
                         opacity: 0.85
                         font.pointSize: 9
@@ -604,20 +604,93 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: folderCol.implicitHeight + 16
+                implicitHeight: xmlExportCol.implicitHeight + 14
+                color: Utility.getAppHexColor("darkerBackground")
+                radius: 6
+                border.width: 1
+                border.color: "#3a4a58"
+
+                ColumnLayout {
+                    id: xmlExportCol
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 6
+
+                    Text {
+                        text: "📄 Save / Export XML Files (Direct Share & Files App):"
+                        color: Utility.getAppHexColor("lightAccent")
+                        font.bold: true
+                        font.pointSize: 9
+                    }
+
+                    GridLayout {
+                        columns: 2
+                        Layout.fillWidth: true
+                        rowSpacing: 6
+                        columnSpacing: 6
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Save Motor (.xml)"
+                            onClicked: {
+                                VescIf.exportXml(VescIf.mcConfig(), "MCConfiguration", "mcconf.xml")
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Save App (.xml)"
+                            onClicked: {
+                                VescIf.exportXml(VescIf.appConfig(), "APPConfiguration", "appconf.xml")
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "Save Refloat (.xml)"
+                            onClicked: {
+                                if (VescIf.customConfigNum() > 0 && VescIf.customConfig(0) !== null) {
+                                    var hwName = VescIf.customConfig(0).getLongName("hw_name")
+                                    var fname = (hwName ? hwName.toLowerCase().replace(/[^a-z0-9]/g, "_") : "refloat") + "_customconf.xml"
+                                    VescIf.exportXml(VescIf.customConfig(0), "CustomConfiguration", fname)
+                                } else {
+                                    VescIf.emitStatusMessage("No custom/refloat config loaded yet", false)
+                                }
+                            }
+                        }
+
+                        Button {
+                            Layout.fillWidth: true
+                            text: "📦 Export All XMLs (.zip)"
+                            highlighted: true
+                            onClicked: {
+                                var canId = mCommands.getSendCan() ? mCommands.getCanSendId() : -1
+                                VescIf.exportAllXmls(canId, customBackupNameInput.text)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: folderCol.implicitHeight + 14
                 color: Utility.getAppHexColor("darkerBackground")
                 radius: 6
 
                 ColumnLayout {
                     id: folderCol
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: 8
+                    spacing: 4
 
                     Text {
-                        text: "Destination Folder (Chrome File System):"
+                        text: VescIf.isDirectoryPickerSupported() ?
+                              "Destination Folder (Chrome File System):" :
+                              "Storage Mode (Browser Storage / Database):"
                         color: Utility.getAppHexColor("lightText")
                         font.bold: true
+                        font.pointSize: 9
                     }
 
                     RowLayout {
@@ -627,25 +700,38 @@ Item {
                         Text {
                             id: folderLabel
                             Layout.fillWidth: true
-                            text: backupConfigDialog.savedFolder !== "" ? backupConfigDialog.savedFolder : "(No folder selected yet)"
-                            color: backupConfigDialog.savedFolder !== "" ? Utility.getAppHexColor("lightText") : Utility.getAppHexColor("disabledText")
-                            font.italic: backupConfigDialog.savedFolder === ""
+                            text: VescIf.isDirectoryPickerSupported() ?
+                                  (backupConfigDialog.savedFolder !== "" ? backupConfigDialog.savedFolder : "(No folder selected yet)") :
+                                  "Browser Storage (IndexedDB)"
+                            color: Utility.getAppHexColor("lightText")
+                            font.italic: VescIf.isDirectoryPickerSupported() && backupConfigDialog.savedFolder === ""
                             elide: Text.ElideMiddle
+                            font.pointSize: 9
                         }
 
                         Button {
+                            visible: VescIf.isDirectoryPickerSupported()
                             text: backupConfigDialog.savedFolder !== "" ? "Change Folder" : "Choose Folder..."
                             onClicked: {
                                 VescIf.selectBackupFolder()
                             }
                         }
                     }
+
+                    Text {
+                        visible: !VescIf.isDirectoryPickerSupported()
+                        text: "On iOS/iPadOS/Safari, backups are stored in browser memory & restored with the Restore button. Use the buttons above to save XML files to iPad Files / Share Sheet."
+                        color: Utility.getAppHexColor("disabledText")
+                        font.pointSize: 8
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                 }
             }
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: 3
 
                 Text {
                     text: "Backup Name / Note (Optional):"
@@ -655,7 +741,7 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    height: customBackupNameInput.implicitHeight + 12
+                    height: customBackupNameInput.implicitHeight + 10
                     color: "#202020"
                     radius: 4
                     border.color: customBackupNameInput.activeFocus ? Utility.getAppHexColor("lightAccent") : "#444444"
@@ -664,9 +750,9 @@ Item {
                     TextInput {
                         id: customBackupNameInput
                         anchors.fill: parent
-                        anchors.margins: 6
+                        anchors.margins: 5
                         color: Utility.getAppHexColor("lightText")
-                        font.pointSize: 10
+                        font.pointSize: 9
                         clip: true
                     }
                 }
@@ -675,7 +761,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
-                Layout.topMargin: 4
+                Layout.topMargin: 2
 
                 Button {
                     Layout.fillWidth: true
@@ -685,11 +771,11 @@ Item {
 
                 Button {
                     Layout.fillWidth: true
-                    text: "Start Backup"
+                    text: "Start Full Backup"
                     highlighted: true
                     onClicked: {
                         backupConfigDialog.customBackupName = customBackupNameInput.text
-                        if (backupConfigDialog.savedFolder === "") {
+                        if (VescIf.isDirectoryPickerSupported() && backupConfigDialog.savedFolder === "") {
                             backupConfigDialog.autoStartAfterFolder = true
                             VescIf.selectBackupFolder()
                             return
@@ -771,15 +857,17 @@ Item {
 
                         Text {
                             Layout.fillWidth: true
-                            text: restoreConfigDialog.currentFolder !== "" ?
-                                  ("Folder: " + restoreConfigDialog.currentFolder) :
-                                  "No backup folder selected yet."
+                            text: VescIf.isDirectoryPickerSupported() ?
+                                  (restoreConfigDialog.currentFolder !== "" ? ("Folder: " + restoreConfigDialog.currentFolder) : "No backup folder selected yet.") :
+                                  "Storage: Browser Database (IndexedDB)"
                             color: Utility.getAppHexColor("lightText")
                             font.bold: true
                             elide: Text.ElideMiddle
+                            font.pointSize: 9
                         }
 
                         Button {
+                            visible: VescIf.isDirectoryPickerSupported()
                             text: restoreConfigDialog.currentFolder !== "" ? "Change Folder" : "Choose Folder..."
                             onClicked: VescIf.selectBackupFolder()
                         }
@@ -811,9 +899,9 @@ Item {
                 color: Utility.getAppHexColor("disabledText")
                 font.italic: true
                 wrapMode: Text.WordWrap
-                text: restoreConfigDialog.scanning ? "Scanning folder for backups..." :
-                      (restoreConfigDialog.currentFolder === "" ? "Click 'Choose Folder' above to select your VESC backups folder." :
-                       "No backup folders found in " + restoreConfigDialog.currentFolder + ". Back up a device first!")
+                text: restoreConfigDialog.scanning ? "Scanning for backups..." :
+                      (restoreConfigDialog.currentFolder === "" && VescIf.isDirectoryPickerSupported() ? "Click 'Choose Folder' above to select your VESC backups folder." :
+                       "No backups found. Perform a backup on the Start page first!")
             }
 
             ScrollView {
@@ -911,13 +999,22 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 10
+                spacing: 8
                 Layout.topMargin: 4
 
                 Button {
                     Layout.fillWidth: true
                     text: "Cancel"
                     onClicked: restoreConfigDialog.close()
+                }
+
+                Button {
+                    Layout.fillWidth: true
+                    text: "Export XMLs"
+                    enabled: restoreConfigDialog.selectedBackup !== ""
+                    onClicked: {
+                        VescIf.exportBackupXmls(restoreConfigDialog.selectedBackup)
+                    }
                 }
 
                 Button {

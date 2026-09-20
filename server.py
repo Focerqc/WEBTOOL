@@ -74,7 +74,30 @@ class CrossOriginIsolatedHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"Proxy error: {e}".encode("utf-8"))
 
-def run_server(port=8080, directory=None):
+def get_lan_ips():
+    ips = []
+    try:
+        import socket
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip.startswith("127."):
+                ips.append(ip)
+    except Exception:
+        pass
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127.") and ip not in ips:
+            ips.append(ip)
+    except Exception:
+        pass
+    return list(dict.fromkeys(ips))
+
+def run_server(bind="0.0.0.0", port=8080, directory=None):
     if directory is None:
         # Default to build-wasm if available, otherwise script dir
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -113,24 +136,34 @@ def run_server(port=8080, directory=None):
     except ImportError:
         server_class = HTTPServer
 
-    server_address = ("0.0.0.0", port)
+    server_address = (bind, port)
     
     try:
         httpd = server_class(server_address, CrossOriginIsolatedHandler)
     except OSError as e:
-        print(f"Error binding to port {port}: {e}")
+        print(f"Error binding to {bind}:{port}: {e}")
         print("Note: Another process might already be using this port.")
         sys.exit(1)
 
-    print("=" * 60)
+    lan_ips = get_lan_ips() if bind in ("0.0.0.0", "") else []
+
+    print("=" * 65)
     print(" VESC Tool WebAssembly Server (Cross-Origin Isolated)")
-    print("=" * 60)
+    print("=" * 65)
     print(f" Serving directory : {directory}")
-    print(f" Listening on      : http://localhost:{port}")
+    print(f" Bound address     : {bind}:{port}")
+    print(f" Local URL         : http://localhost:{port}/vesc_tool_7.00.html")
+    for ip in lan_ips:
+        print(f" LAN / iPad URL    : http://{ip}:{port}/vesc_tool_7.00.html")
     print(f" Direct App URL    : http://localhost:{port}/vesc_tool_7.00.html")
     print(f" Headers enabled   : Cross-Origin-Opener-Policy: same-origin")
     print(f"                     Cross-Origin-Embedder-Policy: require-corp")
-    print("=" * 60)
+    print("=" * 65)
+    if lan_ips:
+        print(" 📱 iPad / Mobile Safari access:")
+        for ip in lan_ips:
+            print(f"    http://{ip}:{port}/vesc_tool_7.00.html")
+        print("=" * 65)
     print(" Press Ctrl+C to stop the server.\n")
 
     try:
@@ -142,8 +175,9 @@ def run_server(port=8080, directory=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Serve WebAssembly files with COOP/COEP headers.")
+    parser.add_argument("-b", "--bind", type=str, default="0.0.0.0", help="Address to bind to (default: 0.0.0.0)")
     parser.add_argument("-p", "--port", type=int, default=8080, help="Port to listen on (default: 8080)")
     parser.add_argument("-d", "--dir", type=str, default=None, help="Directory to serve (default: auto-detect)")
     args = parser.parse_args()
 
-    run_server(port=args.port, directory=args.dir)
+    run_server(bind=args.bind, port=args.port, directory=args.dir)

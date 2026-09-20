@@ -16,7 +16,6 @@ EM_JS(int, js_webserial_is_supported, (), {
 EM_JS(int, js_webserial_init, (), {
     if (typeof window === 'undefined') return 0;
     if (!('serial' in navigator)) {
-        console.warn("WebSerial API is not supported in this browser environment.");
         return 0;
     }
 

@@ -17,7 +17,6 @@ EM_JS(int, js_webble_is_supported, (), {
 EM_JS(int, js_webble_init, (), {
     if (typeof window === 'undefined') return 0;
     if (!('bluetooth' in navigator)) {
-        console.warn("[WEBBLE] Web Bluetooth API is not supported in this browser.");
         return 0;
     }
 
@@ -133,6 +132,9 @@ EM_JS(int, js_webble_init, (), {
                         self.bytesTx += chunk.length;
                         if (typeof window !== 'undefined' && typeof window.updateBleHud === 'function') {
                             window.updateBleHud();
+                        }
+                        if (self.writeQueue.length > 0) {
+                            await new Promise(function(resolve) { setTimeout(resolve, 4); });
                         }
                     }
                 } catch (err) {

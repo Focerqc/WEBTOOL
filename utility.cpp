@@ -2743,3 +2743,4 @@ QVariantMap Utility::getSafeAreaMargins(QQuickWindow *window)
 #endif
     return map;
 }
+

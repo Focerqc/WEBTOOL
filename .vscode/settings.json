@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "C:\\Python314\\python.exe",
+  "python.locator": "native",
+  "python.terminal.activateEnvironment": false,
+  "cmake.configureOnOpen": false,
+  "cmake.autoSelectActiveFolder": false,
+  "cmake.ignoreCMakeLists": true
+}

@@ -353,9 +353,9 @@ ApplicationWindow {
                                             onClicked: {
                                                 canList.currentIndex = index
                                                 if (model.canId < 0) {
-                                                    mCommands.setSendCan(false)
+                                                    VescIf.setSendCanAndReload(false, -1)
                                                 } else {
-                                                    mCommands.setSendCan(true, model.canId)
+                                                    VescIf.setSendCanAndReload(true, model.canId)
                                                 }
                                             }
                                         }

@@ -97,7 +97,9 @@ Item {
     function scanIfEmpty() {
         if (!hasScannedOnConnect &&
                 VescIf.isPortConnected() &&
-                scanButton.enabled) {
+                scanButton.enabled &&
+                !VescIf.qmlAsyncLoading() &&
+                !VescIf.customConfigAsyncLoading()) {
             hasScannedOnConnect = true
             scanButton.clicked()
         }
@@ -169,7 +171,10 @@ Item {
                     !hasScannedOnConnect &&
                     scanButton.enabled &&
                     VescIf.isPortConnected() &&
-                    VescIf.fwRx() && VescIf.customConfigRxDone()) {
+                    VescIf.fwRx() &&
+                    VescIf.customConfigRxDone() &&
+                    !VescIf.qmlAsyncLoading() &&
+                    !VescIf.customConfigAsyncLoading()) {
                 hasScannedOnConnect = true
                 scanButton.clicked()
             }
@@ -242,9 +247,9 @@ Item {
                             cancelPendingQueries()
                             canList.currentIndex = index
                             if (index === 0) {
-                                mCommands.setSendCan(false, 0)
+                                VescIf.setSendCanAndReload(false, -1)
                             } else {
-                                mCommands.setSendCan(true, parseInt(ID))
+                                VescIf.setSendCanAndReload(true, parseInt(ID))
                             }
                         }
                     }
@@ -310,6 +315,11 @@ Item {
             enabled: false
             Layout.fillWidth: true
             onClicked: {
+                if (VescIf.qmlAsyncLoading() || VescIf.customConfigAsyncLoading()) {
+                    console.warn("[CAN_SCREEN] Cannot start CAN scan while async config or QML load is active.")
+                    VescIf.emitStatusMessage("Waiting for QML/Config to finish loading...", false)
+                    return
+                }
                 cancelPendingQueries()
                 scanButton.enabled = false
                 canModel.clear()

@@ -21,6 +21,11 @@ void webfs_init(void);
 int webfs_is_supported(void);
 
 /**
+ * @brief Returns 1 if File System Access API (showDirectoryPicker) is supported in this browser, 0 otherwise.
+ */
+int webfs_is_directory_picker_supported(void);
+
+/**
  * @brief Returns the name of the currently active/saved directory, or empty string if none.
  */
 const char *webfs_get_saved_folder_name(void);
@@ -53,6 +58,13 @@ typedef void (*WebFsFileContentCallback)(const char *filename, const char *conte
  * @brief Trigger an immediate browser file download with the given filename, content, and MIME type.
  */
 void webfs_download_file(const char *filename, const char *content, const char *mimeType);
+
+/**
+ * @brief Trigger a ZIP bundle download/share containing all provided files.
+ * @param zipFilename Name of the zip file (e.g. "vesc_backup_Thor400_2026-09-20.zip")
+ * @param filesJson JSON object where keys are filenames and values are string contents.
+ */
+void webfs_download_zip_bundle(const char *zipFilename, const char *filesJson);
 
 /**
  * @brief Open browser native file selector to read an XML or text file, passing contents to callback.

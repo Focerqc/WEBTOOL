@@ -330,15 +330,31 @@ Item {
     property var appUiObj: 0
 
     function updateHwAppUi () {
-        if (hwUiObj != 0) {
-            hwUiObj.destroy()
+        if (hwUiObj && typeof hwUiObj.destroy === "function") {
+            try { hwUiObj.destroy() } catch(e) {}
             hwUiObj = 0
         }
 
-        if (appUiObj != 0) {
-            appUiObj.destroy()
+        if (appUiObj && typeof appUiObj.destroy === "function") {
+            try { appUiObj.destroy() } catch(e) {}
             appUiObj = 0
         }
+
+        if (swipeView && uiHwPage) swipeView.removeItem(uiHwPage)
+        if (tabBar && uiHwButton) tabBar.removeItem(uiHwButton)
+        if (uiHwPage) {
+            uiHwPage.visible = false
+            uiHwPage.parent = container
+        }
+        if (uiHwButton) uiHwButton.parent = container
+
+        if (swipeView && uiAppPage) swipeView.removeItem(uiAppPage)
+        if (tabBar && uiAppButton) tabBar.removeItem(uiAppButton)
+        if (uiAppPage) {
+            uiAppPage.visible = false
+            uiAppPage.parent = container
+        }
+        if (uiAppButton) uiAppButton.parent = container
 
         swipeView.interactive = true
         tabBar.visible = true
@@ -352,7 +368,13 @@ Item {
             }
 
             try {
-                hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
+                if (uiHwPage) {
+                    uiHwPage.parent = container
+                    uiHwPage.visible = true
+                }
+                if (uiHw) {
+                    hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
+                }
                 if (hwUiObj) {
                     uiHwButton.text = "HwUi"
                     if (hwUiObj.tabTitle) {
@@ -362,17 +384,12 @@ Item {
                     uiHwButton.visible = true
                     swipeView.insertItem(0, uiHwPage)
                     tabBar.insertItem(0, uiHwButton)
-                    uiHwPage.visible = true
                     swipeView.setCurrentIndex(1)
                     swipeView.setCurrentIndex(0)
                 }
             } catch (err) {
                 console.warn("Failed to create HwUi QML object:", err)
             }
-        } else {
-            uiHwPage.visible = false
-            uiHwPage.parent = null
-            uiHwButton.parent = null
         }
 
         if (VescIf.isPortConnected() && VescIf.qmlAppLoaded()) {
@@ -383,27 +400,28 @@ Item {
             }
 
             try {
-                appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
+                if (uiAppPage) {
+                    uiAppPage.parent = container
+                    uiAppPage.visible = true
+                }
+                if (uiApp) {
+                    appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
+                }
                 if (appUiObj) {
                     uiAppButton.text = "AppUi"
                     if (appUiObj.tabTitle) {
                         uiAppButton.text = appUiObj.tabTitle
                     }
 
+                    var appIdx = (uiHwPage && uiHwPage.visible) ? 1 : 0
                     uiAppButton.visible = true
-                    swipeView.insertItem(0, uiAppPage)
-                    tabBar.insertItem(0, uiAppButton)
-                    uiAppPage.visible = true
-                    swipeView.setCurrentIndex(1)
-                    swipeView.setCurrentIndex(0)
+                    swipeView.insertItem(appIdx, uiAppPage)
+                    tabBar.insertItem(appIdx, uiAppButton)
+                    swipeView.setCurrentIndex(appIdx)
                 }
             } catch (err) {
                 console.warn("Failed to create AppUi QML object:", err)
             }
-        } else {
-            uiAppPage.visible = false
-            uiAppPage.parent = null
-            uiAppButton.parent = null
         }
     }
 

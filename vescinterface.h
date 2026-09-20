@@ -235,6 +235,8 @@ public:
     Q_INVOKABLE bool isIgnoringCanChanges();
     Q_INVOKABLE void canTmpOverride(bool fwdCan, int canId);
     Q_INVOKABLE void canTmpOverrideEnd();
+    Q_INVOKABLE void setSendCanAndReload(bool sendCan, int canId);
+    Q_INVOKABLE void reloadFirmwareVersion();
 
     Q_INVOKABLE bool tcpServerStart(int port);
     Q_INVOKABLE void tcpServerStop();
@@ -263,6 +265,7 @@ public:
 
     // Web File System configuration backups
     Q_INVOKABLE bool hasWebFsBackupApi();
+    Q_INVOKABLE bool isDirectoryPickerSupported();
     Q_INVOKABLE QString getSavedBackupFolderName();
     Q_INVOKABLE void selectBackupFolder();
     Q_INVOKABLE void startWebBackup(int canId = -1, QString customName = "");
@@ -270,6 +273,8 @@ public:
     Q_INVOKABLE void restoreFromWebBackup(QString subfolderName, int canId = -1);
     Q_INVOKABLE bool isWasm() const;
     Q_INVOKABLE bool exportXml(ConfigParams *cfg, QString configName, QString defaultFileName = QString());
+    Q_INVOKABLE void exportAllXmls(int canId = -1, QString customName = "");
+    Q_INVOKABLE void exportBackupXmls(QString subfolderName);
     Q_INVOKABLE void importXml(ConfigParams *cfg, QString configName);
 
     Q_INVOKABLE bool deserializeFailedSinceConnected();
@@ -283,9 +288,10 @@ public:
 
     Q_INVOKABLE bool qmlHwLoaded();
     Q_INVOKABLE bool qmlAppLoaded();
+    Q_INVOKABLE bool qmlAsyncLoading();
+    Q_INVOKABLE bool customConfigAsyncLoading();
     Q_INVOKABLE QString qmlHw();
     Q_INVOKABLE QString qmlApp();
-    Q_INVOKABLE static QString adaptQmlToQt6(const QString &qml);
 
     Q_INVOKABLE QString getLastTcpHubVescID() const;
     Q_INVOKABLE QString getLastTcpHubVescPass() const;

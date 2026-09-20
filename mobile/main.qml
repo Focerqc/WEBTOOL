@@ -534,11 +534,11 @@ ApplicationWindow {
                 property int buttonWidth: Math.max(120,
                                                    tabBar.width /
                                                    (rep.model.length +
-                                                    (uiHwPage.visible ? 1 : 0) +
-                                                    (uiAppPage.visible ? 1 : 0) +
-                                                    (confCustomButton.visible ? 1 : 0) +
-                                                    (confPageMotor.visible ? 1 : 0) +
-                                                    (confPageApp.visible ? 1 : 0)))
+                                                    (uiHwPage && uiHwPage.visible ? 1 : 0) +
+                                                    (uiAppPage && uiAppPage.visible ? 1 : 0) +
+                                                    (confCustomButton && confCustomButton.visible ? 1 : 0) +
+                                                    (confPageMotor && confPageMotor.visible ? 1 : 0) +
+                                                    (confPageApp && confPageApp.visible ? 1 : 0)))
 
                 Repeater {
                     id: rep
@@ -555,7 +555,7 @@ ApplicationWindow {
 
     TabButton {
         id: uiHwButton
-        visible: uiHwPage.visible
+        visible: uiHwPage ? uiHwPage.visible : false
         text: "HwUi"
         width: tabBar.buttonWidth
     }
@@ -574,7 +574,7 @@ ApplicationWindow {
 
     TabButton {
         id: uiAppButton
-        visible: uiAppPage.visible
+        visible: uiAppPage ? uiAppPage.visible : false
         text: "AppUi"
         width: tabBar.buttonWidth
     }
@@ -593,21 +593,21 @@ ApplicationWindow {
 
     TabButton {
         id: confMotorButton
-        visible: confPageMotor.visible
+        visible: confPageMotor ? confPageMotor.visible : false
         text: "Motor Cfg"
         width: tabBar.buttonWidth
     }
 
     TabButton {
         id: confAppButton
-        visible: confPageApp.visible
+        visible: confPageApp ? confPageApp.visible : false
         text: "App Cfg"
         width: tabBar.buttonWidth
     }
 
     TabButton {
         id: confCustomButton
-        visible: confCustomPage.visible
+        visible: confCustomPage ? confCustomPage.visible : false
         text: "Custom Cfg"
         width: tabBar.buttonWidth
     }
@@ -764,7 +764,7 @@ ApplicationWindow {
                     antialiasing: true
                     height: parent.width*0.35
                     width: height
-                    source: "qrc" + Utility.getThemePath() + "icons/can_off.png"
+                    source: "qrc" + Utility.getThemePath() + (mCommands.getSendCan() ? "icons/can_on.png" : "icons/can_off.png")
                 }
                 onClicked: {
                     if (canDrawerLoader.item.visible) {
@@ -792,7 +792,9 @@ ApplicationWindow {
             fullLogo: true
 
             Component.onCompleted: {
-                startBleScan()
+                if (!VescIf.isWasm()) {
+                    startBleScan()
+                }
             }
 
             onYChanged: {
@@ -971,45 +973,72 @@ ApplicationWindow {
     property var appUiObj: 0
 
     function updateHwAppUi () {
-        if (hwUiObj != 0) {
-            hwUiObj.destroy()
+        if (hwUiObj && typeof hwUiObj.destroy === "function") {
+            try { hwUiObj.destroy() } catch(e) {}
             hwUiObj = 0
         }
 
-        if (appUiObj != 0) {
-            appUiObj.destroy()
+        if (appUiObj && typeof appUiObj.destroy === "function") {
+            try { appUiObj.destroy() } catch(e) {}
             appUiObj = 0
         }
 
-        mainSwipeView.interactive = true
-        headerBar.visible = true
-        tabBar.enabled = true
+        if (mainSwipeView && uiHwPage) {
+            mainSwipeView.removeItem(uiHwPage)
+        }
+        if (tabBar && uiHwButton) {
+            tabBar.removeItem(uiHwButton)
+        }
+        if (uiHwPage) {
+            uiHwPage.visible = false
+        }
+
+        if (mainSwipeView && uiAppPage) {
+            mainSwipeView.removeItem(uiAppPage)
+        }
+        if (tabBar && uiAppButton) {
+            tabBar.removeItem(uiAppButton)
+        }
+        if (uiAppPage) {
+            uiAppPage.visible = false
+        }
+
+        if (mainSwipeView) {
+            mainSwipeView.interactive = true
+        }
+        if (headerBar) {
+            headerBar.visible = true
+        }
+        if (tabBar) {
+            tabBar.enabled = true
+        }
 
         console.log("[QML_LOAD] updateHwAppUi() called. Connected:", VescIf.isPortConnected(),
                     "qmlHwLoaded:", VescIf.qmlHwLoaded(), "qmlAppLoaded:", VescIf.qmlAppLoaded())
 
         if (VescIf.isPortConnected() && VescIf.qmlHwLoaded()) {
             if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
-                mainSwipeView.interactive = false
-                headerBar.visible = false
-                tabBar.enabled = false
+                if (mainSwipeView) mainSwipeView.interactive = false
+                if (headerBar) headerBar.visible = false
+                if (tabBar) tabBar.enabled = false
             }
 
             try {
                 console.log("[QML_LOAD] Instantiating HwUi QML object (len=" + VescIf.qmlHw().length + ")...")
                 hwUiObj = Qt.createQmlObject(VescIf.qmlHw(), uiHw, "HwUi")
                 if (hwUiObj) {
-                    mainSwipeView.insertItem(1, uiHwPage)
-                    tabBar.insertItem(1, uiHwButton)
-                    uiHwPage.visible = true
-
-                    uiHwButton.text = "HwUi"
-                    if (hwUiObj.tabTitle) {
-                        uiHwButton.text = hwUiObj.tabTitle
+                    if (uiHwButton) {
+                        uiHwButton.text = "HwUi"
+                        if (hwUiObj.tabTitle) {
+                            uiHwButton.text = hwUiObj.tabTitle
+                        }
                     }
-                    console.log("[QML_LOAD] HwUi inserted into tabs! TabTitle:", uiHwButton.text)
+                    if (mainSwipeView && uiHwPage) mainSwipeView.insertItem(1, uiHwPage)
+                    if (tabBar && uiHwButton) tabBar.insertItem(1, uiHwButton)
+                    if (uiHwPage) uiHwPage.visible = true
+                    console.log("[QML_LOAD] HwUi inserted into tabs! TabTitle:", (uiHwButton ? uiHwButton.text : "HwUi"))
 
-                    if (VescIf.getLastFwRxParams().qmlHwFullscreen) {
+                    if (VescIf.getLastFwRxParams().qmlHwFullscreen && mainSwipeView) {
                         mainSwipeView.setCurrentIndex(0)
                         mainSwipeView.setCurrentIndex(1)
                     }
@@ -1019,36 +1048,34 @@ ApplicationWindow {
             } catch (err) {
                 console.error("[QML_LOAD] Failed to create HwUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
             }
-        } else {
-            uiHwPage.visible = false
-            uiHwPage.parent = null
-            uiHwButton.parent = null
         }
 
         if (VescIf.isPortConnected() && VescIf.qmlAppLoaded()) {
             if (VescIf.getLastFwRxParams().qmlAppFullscreen) {
-                mainSwipeView.interactive = false
-                headerBar.visible = false
-                tabBar.enabled = false
+                if (mainSwipeView) mainSwipeView.interactive = false
+                if (headerBar) headerBar.visible = false
+                if (tabBar) tabBar.enabled = false
             }
 
             try {
                 console.log("[QML_LOAD] Instantiating AppUi QML object (len=" + VescIf.qmlApp().length + ")...")
                 appUiObj = Qt.createQmlObject(VescIf.qmlApp(), uiApp, "AppUi")
                 if (appUiObj) {
-                    mainSwipeView.insertItem(1, uiAppPage)
-                    tabBar.insertItem(1, uiAppButton)
-                    uiAppPage.visible = true
-
-                    uiAppButton.text = "AppUi"
-                    if (appUiObj.tabTitle) {
-                        uiAppButton.text = appUiObj.tabTitle
+                    if (uiAppButton) {
+                        uiAppButton.text = "AppUi"
+                        if (appUiObj.tabTitle) {
+                            uiAppButton.text = appUiObj.tabTitle
+                        }
                     }
-                    console.log("[QML_LOAD] AppUi inserted into tabs! TabTitle:", uiAppButton.text)
+                    var appIdx = (uiHwPage && uiHwPage.visible) ? 2 : 1
+                    if (mainSwipeView && uiAppPage) mainSwipeView.insertItem(appIdx, uiAppPage)
+                    if (tabBar && uiAppButton) tabBar.insertItem(appIdx, uiAppButton)
+                    if (uiAppPage) uiAppPage.visible = true
+                    console.log("[QML_LOAD] AppUi inserted into tabs! TabTitle:", (uiAppButton ? uiAppButton.text : "AppUi"))
 
-                    if (VescIf.getLastFwRxParams().qmlAppFullscreen) {
+                    if (VescIf.getLastFwRxParams().qmlAppFullscreen && mainSwipeView) {
                         mainSwipeView.setCurrentIndex(0)
-                        mainSwipeView.setCurrentIndex(1)
+                        mainSwipeView.setCurrentIndex(appIdx)
                     }
                 } else {
                     console.warn("[QML_LOAD] Qt.createQmlObject for AppUi returned null.")
@@ -1056,12 +1083,10 @@ ApplicationWindow {
             } catch (err) {
                 console.error("[QML_LOAD] Failed to create AppUi QML object: " + err + (err.stack ? ("\n" + err.stack) : ""))
             }
-        } else {
-            uiAppPage.visible = false
-            uiAppPage.parent = null
-            uiAppButton.parent = null
         }
     }
+
+    property int confCustomRetries: 0
 
     Timer {
         id: confCustomTimer
@@ -1070,42 +1095,60 @@ ApplicationWindow {
         interval: 500
         repeat: true
         onTriggered: {
-            if (confCustomLoader.status == Loader.Ready) {
+            confCustomRetries++
+            if (confCustomLoader && confCustomLoader.status === Loader.Ready) {
                 stop()
+                confCustomRetries = 0
 
-                var hasCust = (VescIf.isPortConnected() && VescIf.customConfig(0) !== null)
+                var hasCust = (VescIf.isPortConnected() && VescIf.customConfig(0) !== null && VescIf.customConfigNum() > 0)
                 console.log("[CUSTOM_CFG] confCustomTimer triggered. Connected:", VescIf.isPortConnected(),
-                            "hasCust:", hasCust, "loaderReady:", (confCustomLoader.status == Loader.Ready))
+                            "hasCust:", hasCust, "loaderReady:", true)
 
                 if (hasCust) {
-                    if (!confCustomPage.visible) {
-                        mainSwipeView.insertItem(4, confCustomPage)
-                        tabBar.insertItem(4, confCustomButton)
+                    if (confCustomPage && !confCustomPage.visible) {
+                        if (mainSwipeView) mainSwipeView.removeItem(confCustomPage)
+                        if (tabBar) tabBar.removeItem(confCustomButton)
+                        if (mainSwipeView) mainSwipeView.insertItem(4, confCustomPage)
+                        if (tabBar) tabBar.insertItem(4, confCustomButton)
                         confCustomPage.visible = true
                     }
-                    confCustomLoader.item.reloadConfig()
-                    var hwName = VescIf.customConfig(0).getLongName("hw_name")
-                    confCustomButton.text = hwName ? hwName : "Custom CFG"
-                    console.log("[CUSTOM_CFG] Inserted Custom Config page to tabBar! Title:", confCustomButton.text)
+                    if (confCustomLoader.item && typeof confCustomLoader.item.reloadConfig === "function") {
+                        confCustomLoader.item.reloadConfig()
+                    }
+                    var hwName = VescIf.customConfig(0) ? VescIf.customConfig(0).getLongName("hw_name") : ""
+                    if (confCustomButton) {
+                        confCustomButton.text = hwName ? hwName : "Custom CFG"
+                    }
+                    console.log("[CUSTOM_CFG] Inserted Custom Config page to tabBar! Title:", confCustomButton ? confCustomButton.text : "")
                 } else {
-                    confCustomPage.visible = false
-                    confCustomPage.parent = null
-                    confCustomButton.parent = null
+                    if (confCustomPage) {
+                        confCustomPage.visible = false
+                        if (mainSwipeView) mainSwipeView.removeItem(confCustomPage)
+                        confCustomPage.parent = appWindow.contentItem
+                    }
+                    if (confCustomButton) {
+                        if (tabBar) tabBar.removeItem(confCustomButton)
+                        confCustomButton.parent = appWindow.contentItem
+                    }
                 }
+            } else if (!confCustomLoader || confCustomRetries > 20) {
+                stop()
+                confCustomRetries = 0
             }
         }
     }
 
     function updateConfCustom () {
+        confCustomRetries = 0
         confCustomTimer.start()
     }
 
     function indexOffset() {
         var res = 0
-        if (uiHwButton.visible) {
+        if (uiHwButton && uiHwButton.visible) {
             res++
         }
-        if (uiAppButton.visible) {
+        if (uiAppButton && uiAppButton.visible) {
             res++
         }
         return res
@@ -1160,20 +1203,30 @@ ApplicationWindow {
         function onFwRxChanged(rx, limited) {
             if (rx) {
                 if (VescIf.getFwSupportsConfiguration()) {
-                    confPageMotor.visible = true
-                    confPageApp.visible = true
+                    if (confPageMotor && !confPageMotor.visible) {
+                        if (mainSwipeView && confPageApp) mainSwipeView.removeItem(confPageApp)
+                        if (tabBar && confAppButton) tabBar.removeItem(confAppButton)
+                        if (mainSwipeView && confPageMotor) mainSwipeView.removeItem(confPageMotor)
+                        if (tabBar && confMotorButton) tabBar.removeItem(confMotorButton)
 
-                    mainSwipeView.insertItem(4, confPageApp)
-                    tabBar.insertItem(4, confAppButton)
-                    mainSwipeView.insertItem(4, confPageMotor)
-                    tabBar.insertItem(4, confMotorButton)
+                        if (mainSwipeView && confPageApp) mainSwipeView.insertItem(4, confPageApp)
+                        if (tabBar && confAppButton) tabBar.insertItem(4, confAppButton)
+                        if (mainSwipeView && confPageMotor) mainSwipeView.insertItem(4, confPageMotor)
+                        if (tabBar && confMotorButton) tabBar.insertItem(4, confMotorButton)
+                        if (confPageMotor) confPageMotor.visible = true
+                        if (confPageApp) confPageApp.visible = true
+                    }
                 } else {
-                    confPageMotor.visible = false
-                    confPageApp.visible = false
-                    confPageMotor.parent = null
-                    confPageApp.parent = null
-                    confMotorButton.parent = null
-                    confAppButton.parent = null
+                    if (confPageMotor) confPageMotor.visible = false
+                    if (confPageApp) confPageApp.visible = false
+                    if (mainSwipeView && confPageMotor) mainSwipeView.removeItem(confPageMotor)
+                    if (tabBar && confMotorButton) tabBar.removeItem(confMotorButton)
+                    if (mainSwipeView && confPageApp) mainSwipeView.removeItem(confPageApp)
+                    if (tabBar && confAppButton) tabBar.removeItem(confAppButton)
+                    if (confPageMotor) confPageMotor.parent = appWindow.contentItem
+                    if (confPageApp) confPageApp.parent = appWindow.contentItem
+                    if (confMotorButton) confMotorButton.parent = appWindow.contentItem
+                    if (confAppButton) confAppButton.parent = appWindow.contentItem
                 }
 
                 if (VescIf.getFwSupportsConfiguration()) {
@@ -1201,7 +1254,7 @@ ApplicationWindow {
                         "hasQmlHw:", VescIf.getLastFwRxParams().hasQmlHw,
                         "qmlAppLoaded:", VescIf.qmlAppLoaded(),
                         "qmlHwLoaded:", VescIf.qmlHwLoaded())
-            if (VescIf.askQmlLoad()) {
+            if (VescIf.askQmlLoad() && (VescIf.qmlAppLoaded() || VescIf.qmlHwLoaded())) {
                 console.log("[QML_LOAD] Opening qmlLoadDialog for user confirmation...")
                 qmlLoadDialog.open()
             } else {
