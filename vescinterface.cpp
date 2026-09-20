@@ -3081,22 +3081,24 @@ QVector<int> VescInterface::scanCan()
 
     canTmpOverride(false, 0);
 
-    bool timeout = false;
+    auto devsPtr = std::make_shared<QVector<int>>();
+    auto timeoutPtr = std::make_shared<bool>(false);
 
     commands()->pingCan();
-    runTree(Group{SignalWaitTaskItem([this, &canDevs, &timeout](SignalWaitTask &task) {
+    runTree(Group{SignalWaitTaskItem([this, devsPtr, timeoutPtr](SignalWaitTask &task) {
         task.setTimeout(10000); // generous timeout for CAN scan
         task.connectSignal(commands(), &Commands::pingCanRx,
-                           [&canDevs, &timeout](QVector<int> devs, bool isTimeout) {
+                           [devsPtr, timeoutPtr](QVector<int> devs, bool isTimeout) {
             for (int dev: devs) {
-                canDevs.append(dev);
+                devsPtr->append(dev);
             }
-            timeout = isTimeout;
+            *timeoutPtr = isTimeout;
         });
         return SetupResult::Continue;
     })});
 
-    if (!timeout) {
+    if (!*timeoutPtr) {
+        canDevs = *devsPtr;
         mCanDevsLast = canDevs;
     } else {
         canDevs.clear();

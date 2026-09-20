@@ -438,7 +438,7 @@ bool Utility::waitSignal(QObject *sender, QString signal, int timeoutMs)
     Q_UNUSED(signal);
     Q_UNUSED(timeoutMs);
     QCoreApplication::processEvents(QEventLoop::AllEvents);
-    return false;
+    return true;
 #else
     // String-based overload for QML callers (signal name is a runtime string).
     bool signalFired = false;

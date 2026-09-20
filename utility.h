@@ -76,7 +76,7 @@ public:
         Q_UNUSED(signal);
         Q_UNUSED(timeoutMs);
         QCoreApplication::processEvents(QEventLoop::AllEvents);
-        return false;
+        return true;
 #else
         bool signalFired = false;
         auto tree = Group {

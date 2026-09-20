@@ -66,9 +66,11 @@ Item {
     }
 
     function updateUsageListParams() {
-        mMcConf.updateParamDouble("l_duty_start", usageList.currentItem.modelData.duty_start, null)
-        mMcConf.updateParamInt("m_fault_stop_time_ms", usageList.currentItem.modelData.fault_stop_ms, null)
-        mMcConf.updateParamInt("bms.limit_mode", usageList.currentItem.modelData.bms_limit_mode, null)
+        if (usageList.currentItem && usageList.currentItem.modelData) {
+            mMcConf.updateParamDouble("l_duty_start", usageList.currentItem.modelData.duty_start, null)
+            mMcConf.updateParamInt("m_fault_stop_time_ms", usageList.currentItem.modelData.fault_stop_ms, null)
+            mMcConf.updateParamInt("bms.limit_mode", usageList.currentItem.modelData.bms_limit_mode, null)
+        }
     }
 
     Component.onCompleted: {
@@ -914,8 +916,6 @@ Item {
             running: false
 
             onTriggered: {
-                Utility.waitSignal(mCommands, "2ackReceived(QString)", 4000)
-
                 if (!Utility.setBatteryCutCan(VescIf, canDevs, 6.0, 6.0)) {
                     enableDialog()
                     return
@@ -923,53 +923,63 @@ Item {
 
                 Utility.setMcParamsFromCurrentConfigAllCan(VescIf, canDevs, ["m_motor_temp_sens_type", "m_ntc_motor_beta"])
 
-                var res  = Utility.detectAllFoc(VescIf, detectCanBox.checked,
-                                                maxPowerLossBox.realValue,
-                                                currentInMinBox.realValue,
-                                                currentInMaxBox.realValue,
-                                                openloopErpmBox.realValue,
-                                                sensorlessBox.realValue)
-
-                var resDetect = false
-                if (res.startsWith("Success!")) {
-                    resDetect = true
-
-                    Utility.setBatteryCutCanFromCurrentConfig(VescIf, canDevs, usageList.currentItem.modelData.batt_cut_cautious)
-
-                    var updateAllParams = ["l_duty_start"]
-
-                    // Temperature compensation means that the motor can be tracked at lower
-                    // speed across a broader temperature range. Therefore openloop_erpm
-                    // can be decreased.
-                    if (mMcConf.getParamBool("foc_temp_comp")) {
-                        var openloopErpm = mMcConf.getParamDouble("foc_openloop_rpm")
-                        mMcConf.updateParamDouble("foc_openloop_rpm", openloopErpm / 2.0, null)
-                        updateAllParams.push("foc_openloop_rpm")
-                    }
-
-                    // Set sensor mode to HFI start if the motor is sensorless, the firmware supports it
-                    // and the motor and application suggest it.
-                    if (mMcConf.getParamEnumNames("foc_sensor_mode").length >= 5 &&
-                            mMcConf.getParamEnum("foc_sensor_mode") === 0 &&
-                            usageList.currentItem.modelData.hfi_start &&
-                            motorList.currentItem.modelData.hfi_start) {
-                        mMcConf.updateParamEnum("foc_sensor_mode", 4, null)
-                        updateAllParams.push("foc_sensor_mode")
-                    }
-
-                    Utility.setMcParamsFromCurrentConfigAllCan(VescIf, canDevs, updateAllParams)
-                }
-                enableDialog()
-
-                if (resDetect) {
-                    stackLayout.currentIndex++
-                    updateButtonText()
-                }
-
-                resultDialog.title = "Detection Result"
-                resultLabel.text = res
-                resultDialog.open()
+                mCommands.disableAppOutput(180000, true)
+                mCommands.detectAllFoc(detectCanBox.checked,
+                                       maxPowerLossBox.realValue,
+                                       currentInMinBox.realValue,
+                                       currentInMaxBox.realValue,
+                                       openloopErpmBox.realValue,
+                                       sensorlessBox.realValue)
             }
+        }
+    }
+
+    Connections {
+        target: mCommands
+
+        function onDetectAllFocReceived(result) {
+            var resDetect = false
+            var res = ""
+
+            if (result >= 0) {
+                resDetect = true
+                res = "Success!\n\nMotor detection completed successfully."
+
+                if (usageList && usageList.currentItem && usageList.currentItem.modelData) {
+                    Utility.setBatteryCutCanFromCurrentConfig(VescIf, canDevs, usageList.currentItem.modelData.batt_cut_cautious)
+                }
+
+                var updateAllParams = ["l_duty_start"]
+
+                if (mMcConf.getParamBool("foc_temp_comp")) {
+                    var openloopErpm = mMcConf.getParamDouble("foc_openloop_rpm")
+                    mMcConf.updateParamDouble("foc_openloop_rpm", openloopErpm / 2.0, null)
+                    updateAllParams.push("foc_openloop_rpm")
+                }
+
+                if (mMcConf.getParamEnumNames("foc_sensor_mode").length >= 5 &&
+                        mMcConf.getParamEnum("foc_sensor_mode") === 0 &&
+                        usageList && usageList.currentItem && usageList.currentItem.modelData && usageList.currentItem.modelData.hfi_start &&
+                        motorList && motorList.currentItem && motorList.currentItem.modelData && motorList.currentItem.modelData.hfi_start) {
+                    mMcConf.updateParamEnum("foc_sensor_mode", 4, null)
+                    updateAllParams.push("foc_sensor_mode")
+                }
+
+                Utility.setMcParamsFromCurrentConfigAllCan(VescIf, canDevs, updateAllParams)
+            } else {
+                res = "Detection failed. Result code: " + result
+            }
+
+            enableDialog()
+
+            if (resDetect) {
+                stackLayout.currentIndex++
+                updateButtonText()
+            }
+
+            resultDialog.title = "Detection Result"
+            resultLabel.text = res
+            resultDialog.open()
         }
     }
 
