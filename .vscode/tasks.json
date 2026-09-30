@@ -4,9 +4,19 @@
     {
       "label": "Start Cloudflare HTTPS Tunnel",
       "type": "shell",
-      "command": "& \"C:\\Program Files (x86)\\cloudflared\\cloudflared.exe\" tunnel --url http://127.0.0.1:8080",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/run_tunnel.ps1"],
       "isBackground": true,
-      "problemMatcher": [],
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Starting Cloudflare Tunnel.*",
+          "endsPattern": "^.*(Launching cloudflared tunnel|trycloudflare\\.com).*"
+        }
+      },
       "presentation": {
         "reveal": "always",
         "panel": "new"

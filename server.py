@@ -160,7 +160,7 @@ def run_server(bind="0.0.0.0", port=8080, directory=None):
     print(f"                     Cross-Origin-Embedder-Policy: require-corp")
     print("=" * 65)
     if lan_ips:
-        print(" 📱 iPad / Mobile Safari access:")
+        print(" [Mobile] iPad / Mobile Safari access:")
         for ip in lan_ips:
             print(f"    http://{ip}:{port}/vesc_tool_7.00.html")
         print("=" * 65)

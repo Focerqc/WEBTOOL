@@ -73,13 +73,14 @@ Item {
     function cancelPendingQueries() {
         canQueryTimeoutTimer.stop()
         canQueryNextTimer.stop()
-        if (currentCanDev !== -1) {
+        if (currentCanDev !== -1 || VescIf.isCanTmpFwdActive()) {
             VescIf.canTmpOverrideEnd()
             currentCanDev = -1
             currentCanDevRetry = 0
             mCommands.resetFwTimeout()
         }
         pendingCanDevs = []
+        selectDeviceInList()
     }
 
     function queryNextCanDevice() {
@@ -91,7 +92,11 @@ Item {
         if (pendingCanDevs.length === 0) {
             currentCanDev = -1
             currentCanDevRetry = 0
+            if (VescIf.isCanTmpFwdActive()) {
+                VescIf.canTmpOverrideEnd()
+            }
             console.log("[CAN_SCREEN] All CAN device names resolved successfully.")
+            selectDeviceInList()
             return
         }
 
@@ -120,16 +125,22 @@ Item {
     }
 
     function selectDeviceInList() {
+        if (VescIf.isCanTmpFwdActive()) {
+            return
+        }
         if (mCommands.getSendCan()) {
-            for (var i = 0; i < canModel.count;i++) {
+            var targetId = mCommands.getCanSendId()
+            for (var i = 0; i < canModel.count; i++) {
                 var id = parseInt(canModel.get(i).ID)
-                if (id === mCommands.getCanSendId() && canList.currentIndex != i) {
-                    canList.currentIndex = i
-                    break
+                if (id === targetId) {
+                    if (canList.currentIndex !== i) {
+                        canList.currentIndex = i
+                    }
+                    return
                 }
             }
         } else {
-            if (canList.currentIndex != 0) {
+            if (canList.currentIndex !== 0) {
                 canList.currentIndex = 0
             }
         }
@@ -137,7 +148,7 @@ Item {
 
     function ensureLocalDevice() {
         if (canModel.count === 0 && VescIf.isPortConnected() && VescIf.fwRx()) {
-            var params = VescIf.getLastFwRxParams()
+            var params = VescIf.getLocalFwRxParams()
             var name = params.hw
             var theme = "qrc" + Utility.getThemePath()
             var devicePath = theme + "icons/motor_side.png"
@@ -412,7 +423,7 @@ Item {
 
             if (VescIf.isPortConnected()) {
                 canModel.clear()
-                var params = VescIf.getLastFwRxParams()
+                var params = VescIf.getLocalFwRxParams()
                 var name = params.hw
                 var theme = "qrc" + Utility.getThemePath()
                 var devicePath = theme + "icons/motor_side.png"
@@ -458,8 +469,6 @@ Item {
                                      "deviceIconPath": theme + "icons/Electronics-96.png",
                                      "logoIconPath": logoPath})
                 }
-
-                canList.currentIndex = 0
 
                 if (!isTimeout) {
                     VescIf.emitStatusMessage("CAN Scan Finished", true)

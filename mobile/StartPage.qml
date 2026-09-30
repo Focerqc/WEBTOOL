@@ -129,6 +129,9 @@ Item {
                                 VescIf.emitMessageDialog("FOC Setup Wizard",
                                                          "You are not connected to the VESC. Please connect in order " +
                                                          "to run this wizard.", false, false)
+                            } else if (!VescIf.isMotorController()) {
+                                VescIf.emitMessageDialog("FOC Setup Wizard",
+                                                         "This wizard only works for motor controllers.", false, false)
                             } else {
                                 wizardFoc.openDialog()
                             }
@@ -174,6 +177,9 @@ Item {
                                 VescIf.emitMessageDialog("IMU Setup Wizard",
                                                          "You are not connected to the VESC. Please connect in order " +
                                                          "to run this wizard.", false, false)
+                            } else if (!VescIf.isMotorController()) {
+                                VescIf.emitMessageDialog("IMU Setup Wizard",
+                                                         "This wizard only works for motor controllers.", false, false)
                             } else {
                                 wizardIMU.openDialog()
                             }
@@ -546,7 +552,11 @@ Item {
 
         function openDialog() {
             if (!VescIf.isPortConnected()) {
-                VescIf.emitMessageDialog("Backup Configs", "Please connect to the VESC before backing up configurations.", false, false)
+                VescIf.emitMessageDialog("Backup Configuration", "The VESC must be connected to perform this operation.", false, false)
+                return
+            }
+            if (!VescIf.isMotorController()) {
+                VescIf.emitMessageDialog("Backup Configuration", "This only works for motor controllers.", false, false)
                 return
             }
             if (VescIf.hasWebFsBackupApi()) {
@@ -818,7 +828,11 @@ Item {
 
         function openDialog() {
             if (!VescIf.isPortConnected()) {
-                VescIf.emitMessageDialog("Restore Configs", "Please connect to the VESC before restoring configurations.", false, false)
+                VescIf.emitMessageDialog("Restore Configuration", "The VESC must be connected to perform this operation.", false, false)
+                return
+            }
+            if (!VescIf.isMotorController()) {
+                VescIf.emitMessageDialog("Restore Configuration", "This only works for motor controllers.", false, false)
                 return
             }
             if (VescIf.hasWebFsBackupApi()) {

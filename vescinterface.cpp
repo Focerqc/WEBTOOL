@@ -3776,6 +3776,12 @@ void VescInterface::cmdDataToSend(QByteArray data)
 
 void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
 {
+    // Do not process FW version from temporary CAN probes
+    if (mCanTmpFwdActive) {
+        qDebug().noquote() << "[VESC_IF] Ignoring fwVersionReceived while canTmpOverride is active.";
+        return;
+    }
+
     // Do not reload configs when the firmware version is read from somewhere else.
     if (mFwVersionReceived) {
         return;
@@ -3789,6 +3795,7 @@ void VescInterface::fwVersionReceived(FW_RX_PARAMS params)
     mFwSupportsConfiguration = false;
 
     if (!mCommands->getSendCan()) {
+        mLocalFwParams = params;
         mUuidStrLocal = mUuidStr;
     }
 
@@ -4903,11 +4910,6 @@ bool VescInterface::getFwSupportsConfiguration() const
 
 bool VescInterface::confStoreBackup(bool can, QString name)
 {
-#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
-    (void)can;
-    startWebBackup(mCommands->getSendCan() ? mCommands->getCanSendId() : -1, name);
-    return true;
-#else
     if (!isPortConnected()) {
         emitMessageDialog("Backup Configuration", "The VESC must be connected to perform this operation.", false, false);
         return false;
@@ -4918,6 +4920,11 @@ bool VescInterface::confStoreBackup(bool can, QString name)
         return false;
     }
 
+#if defined(Q_OS_WASM) || defined(__EMSCRIPTEN__)
+    (void)can;
+    startWebBackup(mCommands->getSendCan() ? mCommands->getCanSendId() : -1, name);
+    return true;
+#else
     QStringList uuidsOk;
 
     auto storeConf = [this, &uuidsOk, &name]() {
@@ -5278,7 +5285,13 @@ void VescInterface::startWebBackup(int canId, QString customName)
 {
     if (!isPortConnected()) {
         emit webBackupFinished(false, tr("Device not connected."), "");
-        emitMessageDialog(tr("Backup Configuration"), tr("The VESC must be connected to perform a backup."), false, false);
+        emitMessageDialog(tr("Backup Configuration"), tr("The VESC must be connected to perform this operation."), false, false);
+        return;
+    }
+
+    if (mLastFwParams.hwType != HW_TYPE_VESC) {
+        emit webBackupFinished(false, tr("This only works for motor controllers."), "");
+        emitMessageDialog(tr("Backup Configuration"), tr("This only works for motor controllers."), false, false);
         return;
     }
 
@@ -5469,6 +5482,13 @@ void VescInterface::restoreFromWebBackup(QString subfolderName, int canId)
 {
     if (!isPortConnected()) {
         emit webRestoreFinished(false, tr("Device not connected."));
+        emitMessageDialog(tr("Restore Configuration"), tr("The VESC must be connected to perform this operation."), false, false);
+        return;
+    }
+
+    if (mLastFwParams.hwType != HW_TYPE_VESC) {
+        emit webRestoreFinished(false, tr("This only works for motor controllers."));
+        emitMessageDialog(tr("Restore Configuration"), tr("This only works for motor controllers."), false, false);
         return;
     }
 
@@ -5581,6 +5601,16 @@ bool VescInterface::exportXml(ConfigParams *cfg, QString configName, QString def
 
 void VescInterface::exportAllXmls(int canId, QString customName)
 {
+    if (!isPortConnected()) {
+        emitMessageDialog(tr("Backup Configuration"), tr("The VESC must be connected to perform this operation."), false, false);
+        return;
+    }
+
+    if (mLastFwParams.hwType != HW_TYPE_VESC) {
+        emitMessageDialog(tr("Backup Configuration"), tr("This only works for motor controllers."), false, false);
+        return;
+    }
+
     if (canId >= 0) {
         mCommands->setSendCan(true, canId);
     }
@@ -5742,6 +5772,24 @@ bool VescInterface::deserializeFailedSinceConnected()
 FW_RX_PARAMS VescInterface::getLastFwRxParams()
 {
     return mLastFwParams;
+}
+
+FW_RX_PARAMS VescInterface::getLocalFwRxParams()
+{
+    if (mLocalFwParams.major >= 0) {
+        return mLocalFwParams;
+    }
+    return mLastFwParams;
+}
+
+bool VescInterface::isMotorController()
+{
+    return mLastFwParams.hwType == HW_TYPE_VESC;
+}
+
+bool VescInterface::isCanTmpFwdActive() const
+{
+    return mCanTmpFwdActive;
 }
 
 int VescInterface::customConfigNum()

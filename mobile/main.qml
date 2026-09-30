@@ -138,6 +138,7 @@ ApplicationWindow {
 
             onVisibleChanged: {
                 if (visible) {
+                    canScreen.selectDeviceInList()
                     canScreen.scanIfEmpty()
                 }
             }

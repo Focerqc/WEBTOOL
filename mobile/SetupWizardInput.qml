@@ -489,15 +489,16 @@ Item {
                     running: false
                     onTriggered: {
                         if (stackLayout.currentIndex < (stackLayout.count - 1)) {
-                            var apptype = inputList.currentItem.modelData.apptype
                             var ppmMap_wasVisible = ppmMap.visible
 
                             stackLayout.currentIndex++
 
                             if (stackLayout.currentIndex == 1) {
                                 // Type page
-                                mCommands.setSendCan(canIdList.currentItem.modelData.isCan,
-                                                     canIdList.currentItem.modelData.canId)
+                                if (canIdList.currentItem && canIdList.currentItem.modelData) {
+                                    mCommands.setSendCan(canIdList.currentItem.modelData.isCan,
+                                                         canIdList.currentItem.modelData.canId)
+                                }
 
                                 disableDialog()
                                 var res = Utility.resetInputCan(VescIf, VescIf.getCanDevsLast())
@@ -508,6 +509,7 @@ Item {
                                 }
                             } else if (stackLayout.currentIndex == 2) {
                                 // Map page
+                                var apptype = (inputList.currentItem && inputList.currentItem.modelData) ? inputList.currentItem.modelData.apptype : 4
                                 adcMap.visible = false
                                 ppmMap.visible = false
                                 nrfPairBox.visible = false

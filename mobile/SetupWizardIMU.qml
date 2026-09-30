@@ -25,6 +25,20 @@ Item {
     property string imuString: "Unknown"
     property var configuratorRestore: ({})
     property var orientationRestore: ({})
+
+    property real currentRoll: 0.0
+    property real currentPitch: 0.0
+    property real currentYaw: 0.0
+    property real currentAccX: 0.0
+    property real currentAccY: 0.0
+    property real currentAccZ: 0.0
+    property real currentGyroX: 0.0
+    property real currentGyroY: 0.0
+    property real currentGyroZ: 0.0
+    property real maxAccX: -10.0
+    property real maxAccY: -10.0
+    property real maxAccZ: -10.0
+
     property var filteredIMUValues: {
         'roll': 0.0,
         'pitch': 0.0,
@@ -65,7 +79,7 @@ Item {
 
         running: false
         repeat: true
-        interval: 20
+        interval: 40
 
         onTriggered: {
             mCommands.getImuData(0x1FF)
@@ -86,6 +100,29 @@ Item {
     Connections {
         target: mCommands
 
+        function onPrintReceived(str) {
+            var trimmed = str.trim()
+            if (trimmed.length > 0 && (imuType === 1 || imuString.indexOf("detecting") !== -1)) {
+                if (trimmed.indexOf("MPU6050") !== -1) {
+                    imuString = "Internal MPU6050"
+                    imuType = 2
+                } else if (trimmed.indexOf("ICM20948") !== -1) {
+                    imuString = "Internal ICM20948"
+                    imuType = 3
+                } else if (trimmed.indexOf("BMI160") !== -1) {
+                    imuString = "Internal BMI160"
+                    imuType = 4
+                } else if (trimmed.indexOf("LSM6DS3") !== -1) {
+                    imuString = "Internal LSM6DS3"
+                    imuType = 5
+                } else if (trimmed.indexOf("imu_type_internal") === -1 && trimmed.indexOf("Fault") === -1 && trimmed.indexOf("None") === -1) {
+                    imuString = "Internal (" + trimmed + ")"
+                } else if (trimmed.indexOf("None") !== -1 || trimmed.indexOf("Fault") !== -1) {
+                    imuString = "Internal (None detected)"
+                }
+            }
+        }
+
         //        IMU_VALUES() {
         //            roll = 0; pitch = 0; yaw = 0;
         //            accX = 0; accY = 0; accZ = 0;
@@ -95,26 +132,39 @@ Item {
         //            vesc_id = 0;
         //        }
         function onValuesImuReceived(values, mask) {
+            // Update reactive properties
+            currentRoll = values.roll
+            currentPitch = values.pitch
+            currentYaw = values.yaw
 
-            // Update values
-            filteredIMUValues.roll = values.roll
-            filteredIMUValues.pitch = values.pitch
-            filteredIMUValues.yaw = values.yaw
-            filteredIMUValues.accX = (filteredIMUValues.accX * .98) + (values.accX * .02)
-            filteredIMUValues.accY = (filteredIMUValues.accY * .98) + (values.accY * .02)
-            filteredIMUValues.accZ = (filteredIMUValues.accZ * .98) + (values.accZ * .02)
-            filteredIMUValues.gyroX = (filteredIMUValues.gyroX * .99) + (values.gyroX * .01)
-            filteredIMUValues.gyroY = (filteredIMUValues.gyroY * .99) + (values.gyroY * .01)
-            filteredIMUValues.gyroZ = (filteredIMUValues.gyroZ * .99) + (values.gyroZ * .01)
-            filteredIMUValues = filteredIMUValues // Spam UI refreshes lol
+            currentAccX = (currentAccX * 0.98) + (values.accX * 0.02)
+            currentAccY = (currentAccY * 0.98) + (values.accY * 0.02)
+            currentAccZ = (currentAccZ * 0.98) + (values.accZ * 0.02)
+
+            currentGyroX = (currentGyroX * 0.99) + (values.gyroX * 0.01)
+            currentGyroY = (currentGyroY * 0.99) + (values.gyroY * 0.01)
+            currentGyroZ = (currentGyroZ * 0.99) + (values.gyroZ * 0.01)
+
+            // Keep JS objects in sync
+            filteredIMUValues.roll = currentRoll
+            filteredIMUValues.pitch = currentPitch
+            filteredIMUValues.yaw = currentYaw
+            filteredIMUValues.accX = currentAccX
+            filteredIMUValues.accY = currentAccY
+            filteredIMUValues.accZ = currentAccZ
+            filteredIMUValues.gyroX = currentGyroX
+            filteredIMUValues.gyroY = currentGyroY
+            filteredIMUValues.gyroZ = currentGyroZ
 
             // Update peak accel values
-            maxAccelValues.x = Math.max(maxAccelValues.x, filteredIMUValues.accX)
-            maxAccelValues.y = Math.max(maxAccelValues.y, filteredIMUValues.accY)
-            maxAccelValues.z = Math.max(maxAccelValues.z, filteredIMUValues.accZ)
-            maxAccelValues = maxAccelValues
+            maxAccX = Math.max(maxAccX, currentAccX)
+            maxAccY = Math.max(maxAccY, currentAccY)
+            maxAccZ = Math.max(maxAccZ, currentAccZ)
+            maxAccelValues.x = maxAccX
+            maxAccelValues.y = maxAccY
+            maxAccelValues.z = maxAccZ
 
-            // Search for reccomended yaw offset
+            // Search for recommended yaw offset
             var currentMaxPitch = getPitchForYawOffset(calculatedYawOffset)
             if(getPitchForYawOffset(calculatedYawOffset + 0.261799387798) > currentMaxPitch){
                 calculatedYawOffset += 0.261799387798
@@ -130,7 +180,7 @@ Item {
             // Detect working IMU based on noise levels of the gyro X axis
             var noise = Math.abs(values.gyroX - filteredIMUValues.gyroXPrevious)
             filteredIMUValues.gyroXPrevious = values.gyroX
-            filteredIMUValues.gyroXNoise = (filteredIMUValues.gyroXNoise * .9) + (noise * .1)
+            filteredIMUValues.gyroXNoise = (filteredIMUValues.gyroXNoise * 0.9) + (noise * 0.1)
             if(filteredIMUValues.gyroXNoise < 0.01){
                 workingIMU = false
             } else {
@@ -154,6 +204,9 @@ Item {
         bottomMargin: 0
         rightMargin: 0
         padding: 10
+        onClosed: {
+            openTimer.stop()
+        }
         Overlay.modal: Rectangle {
             color: "#AA000000"
         }
@@ -245,9 +298,12 @@ Item {
                         flat: false
 
                         onClicked: {
-                            maxAccelValues.x = -10
-                            maxAccelValues.y = -10
-                            maxAccelValues.z = -10
+                            maxAccX = -10.0
+                            maxAccY = -10.0
+                            maxAccZ = -10.0
+                            maxAccelValues.x = -10.0
+                            maxAccelValues.y = -10.0
+                            maxAccelValues.z = -10.0
                             stackLayout.currentIndex = pages.accelerometerX
                         }
                     }
@@ -320,9 +376,9 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text:"X Offset: " + filteredIMUValues.gyroX.toFixed(2) +
-                        "\nY Offset: " + filteredIMUValues.gyroY.toFixed(2) +
-                        "\nZ Offset: " + filteredIMUValues.gyroZ.toFixed(2)
+                        text:"X Offset: " + currentGyroX.toFixed(2) +
+                        "\nY Offset: " + currentGyroY.toFixed(2) +
+                        "\nZ Offset: " + currentGyroZ.toFixed(2)
                     }// Text
                 }// Column Layout
             }// Item (Gyro Calibration)
@@ -365,8 +421,8 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text: "X:\t" + filteredIMUValues.accX.toFixed(3) +
-                        "\nMax X:\t" + maxAccelValues.x.toFixed(3)
+                        text: "X:\t" + currentAccX.toFixed(3) +
+                        "\nMax X:\t" + maxAccX.toFixed(3)
                     }// Text
                     RowLayout {
                         width: parent.width
@@ -380,8 +436,9 @@ Item {
                             flat: true
 
                             onClicked: {
-                                // Scale down filtered value so it looks like something happened
-                                filteredIMUValues.accX = filteredIMUValues.accX * .9
+                                currentAccX = currentAccX * 0.9
+                                filteredIMUValues.accX = currentAccX
+                                maxAccX = -10.0
                                 maxAccelValues.x = -10.0
                             }
                         }// Button clear
@@ -438,8 +495,8 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text: "Y:\t" + filteredIMUValues.accY.toFixed(3) +
-                        "\nMax Y:\t" + maxAccelValues.y.toFixed(3)
+                        text: "Y:\t" + currentAccY.toFixed(3) +
+                        "\nMax Y:\t" + maxAccY.toFixed(3)
                     }// Text
                     RowLayout {
                         width: parent.width
@@ -453,8 +510,9 @@ Item {
                             flat: true
 
                             onClicked: {
-                                // Scale down filtered value so it looks like something happened
-                                filteredIMUValues.accY = filteredIMUValues.accY * .9
+                                currentAccY = currentAccY * 0.9
+                                filteredIMUValues.accY = currentAccY
+                                maxAccY = -10.0
                                 maxAccelValues.y = -10.0
                             }
                         }// Button clear
@@ -511,8 +569,8 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text: "Z:\t" + filteredIMUValues.accZ.toFixed(3) +
-                        "\nMax Z:\t" + maxAccelValues.z.toFixed(3)
+                        text: "Z:\t" + currentAccZ.toFixed(3) +
+                        "\nMax Z:\t" + maxAccZ.toFixed(3)
                     }// Text
                     RowLayout {
                         width: parent.width
@@ -526,8 +584,9 @@ Item {
                             flat: true
 
                             onClicked: {
-                                // Scale down filtered value so it looks like something happened
-                                filteredIMUValues.accZ = filteredIMUValues.accZ * .9
+                                currentAccZ = currentAccZ * 0.9
+                                filteredIMUValues.accZ = currentAccZ
+                                maxAccZ = -10.0
                                 maxAccelValues.z = -10.0
                             }
                         }// Button clear
@@ -583,7 +642,7 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text: "Roll Offset: " + ((-filteredIMUValues.roll * 180.0/pi) - orientationRestore.rot_roll).toFixed(2)
+                        text: "Roll Offset: " + ((-currentRoll * 180.0/pi) - orientationRestore.rot_roll).toFixed(2)
                     }// Text
 
                     Button {
@@ -637,7 +696,7 @@ Item {
                         font.family: "DejaVu Sans Mono"
                         wrapMode: Text.Wrap
                         Layout.preferredWidth: parent.width
-                        text: "Pitch Offset: " + ((filteredIMUValues.pitch * 180.0/pi) - orientationRestore.rot_pitch).toFixed(2)
+                        text: "Pitch Offset: " + ((currentPitch * 180.0/pi) - orientationRestore.rot_pitch).toFixed(2)
                     }// Text
                     Button {
                         id: skipPitchButton
@@ -997,17 +1056,17 @@ Item {
                         // Save Gyro Offsets
                         mAppConf.updateParamDouble(
                         "imu_conf.gyro_offsets__0",
-                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__0") + filteredIMUValues.gyroX),
+                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__0") + currentGyroX),
                         null
                         )
                         mAppConf.updateParamDouble(
                         "imu_conf.gyro_offsets__1",
-                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__1") + filteredIMUValues.gyroY),
+                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__1") + currentGyroY),
                         null
                         )
                         mAppConf.updateParamDouble(
                         "imu_conf.gyro_offsets__2",
-                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__2") + filteredIMUValues.gyroZ),
+                        (mAppConf.getParamDouble("imu_conf.gyro_offsets__2") + currentGyroZ),
                         null
                         )
 
@@ -1018,7 +1077,7 @@ Item {
                         // Save Accelerometer Offset
                         mAppConf.updateParamDouble(
                         "imu_conf.accel_offsets__0",
-                        (mAppConf.getParamDouble("imu_conf.accel_offsets__0") + maxAccelValues.x -1),
+                        (mAppConf.getParamDouble("imu_conf.accel_offsets__0") + maxAccX -1),
                         null
                         )
                         mCommands.setAppConf()
@@ -1027,7 +1086,7 @@ Item {
                         // Save Accelerometer Offset
                         mAppConf.updateParamDouble(
                         "imu_conf.accel_offsets__1",
-                        (mAppConf.getParamDouble("imu_conf.accel_offsets__1") + maxAccelValues.y -1),
+                        (mAppConf.getParamDouble("imu_conf.accel_offsets__1") + maxAccY -1),
                         null
                         )
                         mCommands.setAppConf()
@@ -1036,16 +1095,16 @@ Item {
                         // Save Accelerometer Offset
                         mAppConf.updateParamDouble(
                         "imu_conf.accel_offsets__2",
-                        (mAppConf.getParamDouble("imu_conf.accel_offsets__2") + maxAccelValues.z -1),
+                        (mAppConf.getParamDouble("imu_conf.accel_offsets__2") + maxAccZ -1),
                         null
                         )
                         mCommands.setAppConf()
                         stackLayout.currentIndex = pages.menu
                     }else if(stackLayout.currentIndex === pages.orientationRoll){
-                        applyRollOffset(-filteredIMUValues.roll)
+                        applyRollOffset(-currentRoll)
                         stackLayout.currentIndex = pages.orientationPitch
                     }else if(stackLayout.currentIndex === pages.orientationPitch){
-                        applyPitchOffset(filteredIMUValues.pitch)
+                        applyPitchOffset(currentPitch)
                         stackLayout.currentIndex = pages.orientationYaw
                     }else if(stackLayout.currentIndex === pages.orientationYaw){
                         applyYawOffset(-calculatedYawOffset)
@@ -1184,7 +1243,7 @@ Item {
 
     function getPitchForYawOffset(yaw){
         var rotated = rotateEulerAngles(
-                    {"roll": filteredIMUValues.roll, "pitch": filteredIMUValues.pitch, "yaw": filteredIMUValues.yaw},
+                    {"roll": currentRoll, "pitch": currentPitch, "yaw": currentYaw},
                     {"roll": 0, "pitch": 0, "yaw": yaw}
         )
 
@@ -1196,20 +1255,8 @@ Item {
         if(imuType === 0){ //off
             imuString = "Off"
         }else if(imuType === 1){ //internal
-            var internalTypeString = Utility.readInternalImuType(VescIf)
-            imuString = "Internal " + internalTypeString
-            if(internalTypeString === "MPU6050"){
-                imuType = 2
-            }else if(internalTypeString === "ICM20948"){
-                imuType = 3
-            }else if(internalTypeString === "BMI160"){
-                imuType = 4
-            }else if(internalTypeString === "LSM6DS3"){
-                imuType = 5
-            }else if(internalTypeString === "-> imu_type_internal \n"){
-                imuString = "Internal: Read error, redo search."
-                imuType = 1
-            }
+            imuString = "Internal (detecting...)"
+            mCommands.sendTerminalCmd("imu_type_internal")
         }else if(imuType === 2){ //MPU6050
             imuString = "MPU6050"
         }else if(imuType === 3){ //ICM20948

@@ -280,6 +280,9 @@ public:
     Q_INVOKABLE bool deserializeFailedSinceConnected();
 
     Q_INVOKABLE FW_RX_PARAMS getLastFwRxParams();
+    Q_INVOKABLE FW_RX_PARAMS getLocalFwRxParams();
+    Q_INVOKABLE bool isMotorController();
+    Q_INVOKABLE bool isCanTmpFwdActive() const;
 
     Q_INVOKABLE int customConfigNum();
     Q_INVOKABLE bool customConfigsLoaded();
@@ -599,6 +602,7 @@ private:
     QVector<int> mCanDevsLast;
 
     FW_RX_PARAMS mLastFwParams;
+    FW_RX_PARAMS mLocalFwParams;
     QMap<QString, QPair<QString, int> > mLastFwUuids;
     bool mFwSwapDone;
     bool mBlockFwSwap;
