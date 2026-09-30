@@ -1,3 +1,73 @@
+# VESC® Tool Web (WebAssembly Port)
+
+> **Note to VESC® Project Maintainers & Community:**
+> This repository is an experimental port of the official **VESC® Tool** to **WebAssembly (WASM)** using **Qt 6.11 (Multithreaded)** and **Emscripten**.
+> Our primary goal is to provide a zero-install, cross-platform browser experience for configuring and monitoring VESC® motor controllers and accessories over **Web Bluetooth (WebBLE)** and **Web Serial (USB)** directly on desktop browsers, Chromebooks, Android tablets, and iPads.
+>
+> We welcome your review, feedback, architectural guidance, and hope to upstream improvements to make browser-based VESC tooling an official, first-class citizen!
+
+---
+
+## 🚀 Work Accomplished So Far
+
+1. **Full Qt 6.11 Multithreaded WebAssembly Build Pipeline**:
+   - Compiled VESC Tool's core engine, Qt Quick / QML interfaces, and protocol decoders into WebAssembly using Emscripten.
+   - Configured `SharedArrayBuffer` support with full `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` header isolation.
+
+2. **Native Web Hardware Transport Bridges**:
+   - **Web Bluetooth (WebBLE)**: Direct BLE connection from the browser to VESC Express, NRF52 modules, and built-in BLE chips without requiring native OS BLE drivers or background daemons.
+   - **Web Serial**: Direct USB serial CDC communication via Chrome/Edge `navigator.serial`.
+   - Bidirectional C++ / JavaScript packet bridge (`bleuart_wasm.cpp`, `wasm_serial_bridge.cpp`) integrated into `VescInterface`.
+
+3. **Responsive Mobile & Desktop UIs**:
+   - Seamless switching between desktop layout and touch-optimized mobile layouts (smartphones, iPad, Android tablets).
+   - Real-time telemetry streaming (RT Data, Refloat, IMU gauges, BMS monitors).
+
+4. **Web File System Access API Integration**:
+   - In-browser backup and restore for motor configs (`mcconf`), app configs (`appconf`), and custom board XMLs.
+   - Saves organized JSON/XML backup bundles directly to the user's chosen local folder via modern browser File System Access API.
+
+5. **CAN Bus Forwarding & Multi-Device Isolation**:
+   - Fixed CAN device discovery and routing when connected locally via VESC Express or NRF to remote ESCs (e.g. Thor400v2, Little FOCer) and BMS units (e.g. VBMS32-micro).
+   - Separated local hardware tracking (`mLocalFwParams`) from active CAN target parameters (`mLastFwParams`), preventing temporary CAN scan probes from corrupting active controller profiles.
+
+6. **WASM-Optimized IMU Calibration & Wizards**:
+   - Re-engineered the IMU setup wizard and Gyroscope/Accelerometer calibration screens to use reactive QML properties, ensuring real-time value updates under Qt 6 QML.
+   - Converted internal IMU hardware detection from blocking synchronous terminal requests into asynchronous command/response pipelines to prevent browser UI freezing.
+
+---
+
+## ⚡ Key Technical Challenges & Main Struggles
+
+1. **Absence of Synchronous Event Loops in WebAssembly**:
+   - In native desktop Qt builds, VESC Tool frequently relies on synchronous blocking helpers like `Utility::waitSignal()`, `sendTerminalCmdSync()`, or nested `QEventLoop::exec()` while waiting for hardware responses.
+   - In WebAssembly, blocking the main thread immediately deadlocks the browser's JavaScript event loop, halting WebBLE packet reception and Web Serial I/O.
+   - **Ongoing effort**: Systematically refactoring synchronous wizards (motor detection, CAN pinging, terminal commands) into asynchronous signal-slot workflows.
+
+2. **WebBLE Bandwidth Pacing & Flow Control**:
+   - Web Bluetooth does not provide deep driver-level buffering. Sending rapid back-to-back requests (e.g., 50Hz IMU polling or unthrottled CAN scans) saturates browser queues and causes dropped packets.
+   - Requires careful interval tuning (e.g., 40ms polling intervals) and packet batching to maintain rock-solid wireless stability.
+
+3. **Browser Security Sandboxing (Cross-Origin Isolation & Permissions)**:
+   - Multithreaded WebAssembly requires `SharedArrayBuffer`, which modern browsers strictly prohibit unless served over HTTPS with strict `COOP`/`COEP` security headers.
+   - Hardware APIs (`navigator.bluetooth`, `navigator.serial`) require explicit user activation (gestures) and cannot be opened spontaneously from background threads.
+
+4. **Qt 6 QML Property Reactivity Differences**:
+   - In Qt 6 QML, assigning an updated JavaScript object back to a `var` property no longer triggers change notifications if the object pointer reference is unchanged.
+   - Required explicitly migrating live telemetry and wizard state to primitive QML properties.
+
+---
+
+## 🤝 Next Steps & Review Points for VESC Leaders
+
+- Reviewing the asynchronous communication patterns to see if they can be unified with the official upstream code.
+- Feedback on the Web File System backup architecture and whether a standardized REST/WebSocket or WebTransport fallback should be adopted.
+- Discussion on trademark compliance, hosting guidelines, and potential official inclusion under the VESC Project umbrella.
+
+---
+
+# OLD README:
+
 # VESC® Tool
 
 This is the source code of VESC Tool. A pre-compiled binary of both the stable release as well as the development release packaged with all the matching firmware for all supported hardware can be downloaded at http://vesc-project.com/
